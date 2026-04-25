@@ -1,0 +1,11 @@
+.claude/settings.local.json
+.python-version
+
+# Agent context (auto-generated on terminal init)
+CLAUDE.local.md
+.stanley-project
+.context
+AgentContext/
+
+# Logs
+*.log

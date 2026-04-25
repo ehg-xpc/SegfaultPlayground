@@ -1,0 +1,23 @@
+git
+# Note: pwsh removed - use system-installed PowerShell 7+ to avoid conflicts
+7zip
+
+# Development tools
+beyondcompare
+clink
+clink-completions
+sqlitebrowser
+fork
+nvm
+insomnia
+
+# Terminal tools
+micro
+glow
+
+# PowerShell modules
+posh-git
+
+# Fonts
+CascadiaCode-NF
+FiraCode-NF

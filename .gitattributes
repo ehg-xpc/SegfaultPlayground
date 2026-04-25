@@ -1,0 +1,28 @@
+# Set default behavior to automatically normalize line endings.
+* text=auto
+
+# Force PowerShell scripts to use CRLF line endings (Windows standard)
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+
+# Force batch/cmd scripts to use CRLF line endings
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Force shell scripts to use LF line endings
+*.sh text eol=lf
+
+# Python version files should use LF line endings (Python ecosystem standard)
+.python-version text eol=lf
+
+
+# Mark binary files
+*.exe binary
+*.dll binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary

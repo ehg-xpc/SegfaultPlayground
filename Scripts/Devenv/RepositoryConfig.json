@@ -1,0 +1,16 @@
+{
+  "repositories": {
+    "Workbench": {
+      "folderName": "Workbench",
+      "description": "Generic workspace tab with no repo context",
+      "tabTitle": "Workbench",
+      "icon": "%DEV_REPO%\\Resources\\Icons\\Workbench.ico",
+      "startingDirectory": "%Repos%\\Workbench",
+      "commandline": "pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File \"%DEV_REPO%\\Scripts\\Devenv\\UserEnv.ps1\""
+    }
+  },
+  "groups": {},
+  "baseReposPath": "%Repos%",
+  "defaultBranch": "main",
+  "defaultProfile": "Workbench"
+}

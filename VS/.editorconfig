@@ -1,0 +1,20 @@
+# Visual Studio generated .editorconfig file with C++ settings.
+root = true
+
+[*.{c++,cc,cpp,cppm,cxx,h,h++,hh,hpp,hxx,inl,ipp,ixx,tlh,tli}]
+
+# Visual C++ Code Style settings
+
+cpp_generate_documentation_comments = xml
+
+# Visual C++ Include Cleanup settings
+
+cpp_include_cleanup_add_missing_error_tag_type = suggestion
+cpp_include_cleanup_remove_unused_error_tag_type = dimmed
+cpp_include_cleanup_optimize_unused_error_tag_type = suggestion
+cpp_include_cleanup_sort_after_edits = true
+cpp_sort_includes_error_tag_type = suggestion
+cpp_sort_includes_priority_case_sensitive = false
+cpp_sort_includes_priority_style = quoted
+cpp_includes_style = default
+cpp_includes_use_forward_slash = true
