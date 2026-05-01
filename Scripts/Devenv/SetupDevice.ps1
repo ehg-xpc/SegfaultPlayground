@@ -154,6 +154,11 @@ function Update-SessionPath {
         $trimmed
     }
 
+    $localBin = Join-Path $env:USERPROFILE ".local\bin"
+    if ((Test-Path $localBin -ErrorAction SilentlyContinue) -and -not $current.ContainsKey($localBin.ToLowerInvariant())) {
+        $pathsToAdd += $localBin
+    }
+
     if ($pathsToAdd) {
         $env:Path = $env:Path + ";" + ($pathsToAdd -join ";")
         Write-Verbose "Added $($pathsToAdd.Count) path(s) to current session"
@@ -539,6 +544,63 @@ function Install-Python {
         # Update PATH for current session
         Update-SessionPath | Out-Null
 
+        # Ensure python.exe and python3.exe trampolines exist in ~/.local/bin
+        # so bare "python" works for tools that don't use "uv run"
+        $localBin = Join-Path $env:USERPROFILE ".local\bin"
+        if (-not (Test-Path $localBin)) {
+            New-Item -ItemType Directory -Path $localBin -Force | Out-Null
+        }
+
+        $trampoline = Get-ChildItem -Path $localBin -Filter "python3.*.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+        if (-not $trampoline) {
+            $uvPythonPath = uv python find 3.12.1 2>$null | Out-String
+            $uvPythonPath = $uvPythonPath -replace '\s+', ''
+            if ($uvPythonPath -and (Test-Path $uvPythonPath)) {
+                $trampoline = Get-Item -Path $uvPythonPath
+            } else {
+                $uvPythonList = uv python list 2>&1 | Out-String
+                if ($uvPythonList -match '([A-Za-z]:\\[^\r\n]*python\.exe)') {
+                    $uvPythonPath = $Matches[1].Trim()
+                    if (Test-Path $uvPythonPath) {
+                        $trampoline = Get-Item -Path $uvPythonPath
+                    }
+                }
+            }
+        }
+
+        if ($trampoline) {
+            $pythonPath = $trampoline.FullName
+
+            # Remove any stale Python executables from ~/.local/bin so the wrappers win.
+            Get-ChildItem -Path $localBin -Filter "python*.exe" -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+
+            foreach ($name in @("python.cmd", "python3.cmd")) {
+                $dest = Join-Path $localBin $name
+                $wrapper = "@echo off`r`n"
+                $wrapper += '"' + $pythonPath + '" %*'
+                Set-Content -Path $dest -Value $wrapper -Encoding ASCII
+                Write-Success "Created $name wrapper in ~/.local/bin"
+            }
+
+            foreach ($name in @("pip.cmd", "pip3.cmd")) {
+                $dest = Join-Path $localBin $name
+                $wrapper = "@echo off`r`n"
+                $wrapper += '"' + $pythonPath + '" -m pip %*'
+                Set-Content -Path $dest -Value $wrapper -Encoding ASCII
+                Write-Success "Created $name wrapper in ~/.local/bin"
+            }
+
+            if ($env:Path -notlike "*$localBin*") {
+                $env:Path = "$env:Path;$localBin"
+            }
+            Update-SessionPath | Out-Null
+        } else {
+            Write-Info "No local Python executable found to create trampolines in ~/.local/bin -- bare 'python' may not be on PATH"
+        }
+
         # Verify installation
         $pythonVersion = uv python list 2>&1 | Out-String
         if ($pythonVersion -match "3\.12\.1") {
@@ -734,6 +796,38 @@ function Add-GitToPath {
     $errorMsg = "Git not found in PATH or common locations - it may require a terminal restart"
     Write-Info $errorMsg
     Add-ErrorRecord "Git PATH" $errorMsg
+}
+
+function Ensure-LocalBinOnUserPath {
+    $localBin = Join-Path $env:USERPROFILE ".local\bin"
+
+    if (-not (Test-Path $localBin)) {
+        try {
+            New-Item -ItemType Directory -Path $localBin -Force | Out-Null
+            Write-Success "Created directory: $localBin"
+        } catch {
+            Write-ErrorMsg "Failed to create ${localBin}: $($_.Exception.Message)"
+            Add-ErrorRecord "PATH" "Failed to create ${localBin}: $($_.Exception.Message)"
+            return
+        }
+    }
+
+    $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $normalized = $currentUserPath -split ';' | ForEach-Object { $_.TrimEnd('\').Trim() } | Where-Object { $_ }
+    if ($normalized -contains $localBin) {
+        Write-Success "$localBin is already in User PATH"
+    } else {
+        if ($currentUserPath) {
+            [Environment]::SetEnvironmentVariable("Path", "$currentUserPath;$localBin", "User")
+        } else {
+            [Environment]::SetEnvironmentVariable("Path", $localBin, "User")
+        }
+        Write-Success "Added $localBin to User PATH"
+    }
+
+    if ($env:Path -notlike "*$localBin*") {
+        $env:Path = "$env:Path;$localBin"
+    }
 }
 
 function Get-DevConfig {
@@ -1017,6 +1111,7 @@ function Run-SetupScripts {
     $scriptsPath = Join-Path $PSScriptRoot ".."
 
     $setupScripts = @(
+        "Devenv/SetupCLink.ps1",
         "Devenv/SetupWindowsTerminal.ps1",
         "Maintenance/SetupRepoMaintenance.ps1"
     )
@@ -1071,6 +1166,10 @@ function Confirm-ToolsOnPath {
 function Main {
     Write-Host "Dev Environment Setup" -ForegroundColor Magenta
     Write-Host "=====================" -ForegroundColor Magenta
+
+    # Ensure ~/.local/bin is permanently in the User PATH and available in this session.
+    Ensure-LocalBinOnUserPath
+    Update-SessionPath | Out-Null
 
     try {
         # Install package managers

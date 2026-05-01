@@ -1,0 +1,196 @@
+﻿{
+    "$help":  "https://aka.ms/terminal-documentation",
+    "$schema":  "https://aka.ms/terminal-profiles-schema",
+    "actions":  [
+                    {
+                        "command":  {
+                                        "action":  "globalSummon"
+                                    },
+                        "id":  "User.globalSummon.51A3D78C"
+                    },
+                    {
+                        "command":  {
+                                        "action":  "closeTab"
+                                    },
+                        "id":  "User.closeTab.0"
+                    },
+                    {
+                        "command":  {
+                                        "action":  "adjustFontSize",
+                                        "delta":  -2
+                                    },
+                        "id":  "User.adjustFontSize.23EDA85F"
+                    },
+                    {
+                        "command":  {
+                                        "action":  "adjustFontSize",
+                                        "delta":  2
+                                    },
+                        "id":  "User.adjustFontSize.27F8A00E"
+                    }
+                ],
+    "copyOnSelect":  true,
+    "defaultProfile":  "{2dab62c8-ab5d-8f6e-5b81-520d5f235d09}",
+    "firstWindowPreference":  "defaultProfile",
+    "initialCols":  155,
+    "initialRows":  53,
+    "keybindings":  [
+                        {
+                            "id":  "User.globalSummon.51A3D78C",
+                            "keys":  "ctrl+`"
+                        },
+                        {
+                            "id":  "Terminal.ToggleFocusMode",
+                            "keys":  "ctrl+shift+enter"
+                        },
+                        {
+                            "id":  "Terminal.RestartConnection",
+                            "keys":  "ctrl+shift+r"
+                        },
+                        {
+                            "id":  "Terminal.MoveFocusUp",
+                            "keys":  "ctrl+alt+up"
+                        },
+                        {
+                            "id":  "Terminal.FindText",
+                            "keys":  "ctrl+shift+f"
+                        },
+                        {
+                            "id":  "Terminal.PasteFromClipboard",
+                            "keys":  "ctrl+v"
+                        },
+                        {
+                            "id":  "Terminal.CopyToClipboard",
+                            "keys":  "ctrl+c"
+                        },
+                        {
+                            "id":  "Terminal.DuplicatePaneAuto",
+                            "keys":  "alt+shift+d"
+                        },
+                        {
+                            "id":  "User.adjustFontSize.27F8A00E",
+                            "keys":  "ctrl+plus"
+                        },
+                        {
+                            "id":  "User.adjustFontSize.23EDA85F",
+                            "keys":  "ctrl+minus"
+                        },
+                        {
+                            "id":  "Terminal.MoveFocusDown",
+                            "keys":  "ctrl+alt+down"
+                        },
+                        {
+                            "id":  "Terminal.MoveFocusLeft",
+                            "keys":  "ctrl+alt+left"
+                        },
+                        {
+                            "id":  "User.closeTab.0",
+                            "keys":  "ctrl+w"
+                        },
+                        {
+                            "id":  "Terminal.MoveFocusRight",
+                            "keys":  "ctrl+alt+right"
+                        },
+                        {
+                            "id":  "Terminal.ResetFontSize",
+                            "keys":  "ctrl+0"
+                        }
+                    ],
+    "launchMode":  "default",
+    "minimizeToNotificationArea":  false,
+    "newTabMenu":  null,
+    "profiles":  {
+                     "defaults":  {
+                                      "altGrAliasing":  true,
+                                      "antialiasingMode":  "cleartype",
+                                      "bellStyle":  "none",
+                                      "colorScheme":  "Tomorrow Night",
+                                      "font":  {
+                                                   "face":  "CaskaydiaCove NF",
+                                                   "size":  12
+                                               },
+                                      "opacity":  97,
+                                      "padding":  "16",
+                                      "scrollbarState":  "hidden",
+                                      "useAcrylic":  false
+                                  },
+                     "list":  [
+                                  {
+                                      "commandline":  "cmd /k clink inject --quiet \u0026 pushd \"%USERPROFILE%\"",
+                                      "guid":  "{e8b01001-ed9a-4a01-b001-00000000000b}",
+                                      "name":  "Command Prompt"
+                                  },
+                                  {
+                                      "commandline":  "pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File \"%Repos%\\developer\\edgarhg\\scripts\\DevEnv\\UserEnv.ps1\"",
+                                      "guid":  "{e8b01001-ed9a-4a01-b001-00000000000d}",
+                                      "name":  "PowerShell",
+                                      "startingDirectory":  "%USERPROFILE%"
+                                  },
+                                  {
+                                      "guid":  "{b453ae62-4e3d-5e58-b989-0a998ec441b8}",
+                                      "hidden":  false,
+                                      "name":  "Azure Cloud Shell",
+                                      "source":  "Windows.Terminal.Azure"
+                                  },
+                                  {
+                                      "guid":  "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
+                                      "hidden":  false,
+                                      "name":  "Windows PowerShell"
+                                  }
+                              ]
+                 },
+    "schemes":  [
+                    {
+                        "background":  "#272822",
+                        "black":  "#272822",
+                        "blue":  "#01549E",
+                        "brightBlack":  "#7C7C7C",
+                        "brightBlue":  "#0383F5",
+                        "brightCyan":  "#58C2E5",
+                        "brightGreen":  "#8DD006",
+                        "brightPurple":  "#A87DB8",
+                        "brightRed":  "#F3044B",
+                        "brightWhite":  "#FFFFFF",
+                        "brightYellow":  "#CCCC81",
+                        "cursorColor":  "#CACACA",
+                        "cyan":  "#1A83A6",
+                        "foreground":  "#CACACA",
+                        "green":  "#74AA04",
+                        "name":  "Monokai",
+                        "purple":  "#89569C",
+                        "red":  "#A70334",
+                        "selectionBackground":  "#89569C",
+                        "white":  "#CACACA",
+                        "yellow":  "#B6B649"
+                    },
+                    {
+                        "background":  "#1D1F21",
+                        "black":  "#1D1F21",
+                        "blue":  "#40515F",
+                        "brightBlack":  "#969896",
+                        "brightBlue":  "#81A2BE",
+                        "brightCyan":  "#8ABAB7",
+                        "brightGreen":  "#B5BD68",
+                        "brightPurple":  "#B294BB",
+                        "brightRed":  "#CC6666",
+                        "brightWhite":  "#FFFFFF",
+                        "brightYellow":  "#F0C674",
+                        "cursorColor":  "#C5C8C6",
+                        "cyan":  "#455D5B",
+                        "foreground":  "#C5C8C6",
+                        "green":  "#5A5E34",
+                        "name":  "Tomorrow Night",
+                        "purple":  "#594A5D",
+                        "red":  "#663333",
+                        "selectionBackground":  "#40515F",
+                        "white":  "#C5C8C6",
+                        "yellow":  "#78633A"
+                    }
+                ],
+    "themes":  [
+
+               ],
+    "trimBlockSelection":  true,
+    "warning.confirmCloseAllTabs":  true,
+    "windowingBehavior":  "useAnyExisting"
+}
