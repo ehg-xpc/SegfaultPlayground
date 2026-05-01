@@ -1,18 +1,14 @@
-# start-agent-container.ps1 - Launch a Claude Code agent container for a Stanley worktree
+# start-agent-container.ps1 - Launch a dev-node container for a worktree
 #
 # Usage:
 #   .\start-agent-container.ps1 <slug>
 #   .\start-agent-container.ps1 <project>/<slug>
 #   .\start-agent-container.ps1 C:\\.worktrees\\MyRepo\\my-branch
 #
-# Launches claude --dangerously-skip-permissions inside the ado-agent container
-# with the resolved worktree mounted at /worktree, task queue at /tasks,
-# and shared agent context at /context (read-only).
-#
-# PAT resolution order:
-#   1. $env:AZDO_PAT
-#   2. ~/.stanley/agent-container.env  (AZDO_PAT=<token>)
-#   3. Fail loudly
+# Launches an interactive shell inside the dev-node container with the resolved
+# worktree mounted at /worktree, task queue at /tasks, and shared agent context
+# at /context (read-only). Claude Code and OpenCode CLIs are available but not
+# launched automatically.
 
 [CmdletBinding()]
 param(
@@ -20,7 +16,7 @@ param(
     [string]$Target,
 
     [string]$Project,
-    [string]$Image = 'ado-agent'
+    [string]$Image = 'dev-node'
 )
 
 Set-StrictMode -Version Latest
@@ -84,7 +80,7 @@ if ([System.IO.Path]::IsPathRooted($Target)) {
         Fail "Worktree not found for ${projectName}/${slug}`n  Searched:`n    $ShortRoot\$projectName\$slug`n    $DefaultRoot\$projectName\$slug"
     }
 } else {
-    # Bare slug — search all projects under both roots
+    # Bare slug -- search all projects under both roots
     $slug    = $Target
     $results = @(Search-AllProjects -slug $slug)
     if ($results.Count -eq 0) {
@@ -100,29 +96,6 @@ if ([System.IO.Path]::IsPathRooted($Target)) {
 
 Write-Step "Worktree:  $worktreePath"
 Write-Step "Project:   $projectName"
-
-# --------------------------------------------------------------------------
-# Resolve PAT
-# --------------------------------------------------------------------------
-$pat = $env:AZDO_PAT
-
-if (-not $pat) {
-    $envFile = Join-Path $env:USERPROFILE '.stanley\agent-container.env'
-    if (Test-Path $envFile) {
-        foreach ($line in Get-Content $envFile) {
-            if ($line -match '^\s*AZDO_PAT\s*=\s*(.+)$') {
-                $pat = $Matches[1].Trim()
-                break
-            }
-        }
-    }
-}
-
-if (-not $pat) {
-    Fail "AZDO_PAT not set.`n  Option 1: `$env:AZDO_PAT = '<token>'`n  Option 2: add AZDO_PAT=<token> to $env:USERPROFILE\.stanley\agent-container.env"
-}
-
-Write-Step "PAT:       [resolved]"
 
 # --------------------------------------------------------------------------
 # Resolve and validate mount paths
@@ -155,7 +128,7 @@ $dockerClaude     = ConvertTo-DockerPath $claudePath
 $dockerClaudeJson = ConvertTo-DockerPath $claudeJsonPath
 
 # --------------------------------------------------------------------------
-# Launch container
+# Launch container (interactive shell -- run claude or opencode manually)
 # --------------------------------------------------------------------------
 Write-Step "Image:     $Image"
 Write-Step "Mounts:"
@@ -165,16 +138,16 @@ Write-Host "             /context                         <- $contextPath"    -F
 Write-Host "             /home/agent/.claude              <- $claudePath"     -ForegroundColor DarkGray
 Write-Host "             /home/agent/.claude/.claude.json <- $claudeJsonPath" -ForegroundColor DarkGray
 Write-Host ""
+Write-Host "Launching interactive shell. Run 'claude' or 'opencode' to start an agent session." -ForegroundColor Yellow
+Write-Host ""
 
 docker run --rm -it `
     --cap-add=NET_ADMIN `
     --cap-add=NET_RAW `
-    -e "AZDO_PAT=$pat" `
     -v "${dockerWorktree}:/worktree" `
     -v "${dockerTasks}:/tasks" `
     -v "${dockerContext}:/context:ro" `
     -v "${dockerClaude}:/home/agent/.claude" `
     -v "${dockerClaudeJson}:/home/agent/.claude/.claude.json" `
     -w /worktree `
-    $Image `
-    claude --dangerously-skip-permissions
+    $Image

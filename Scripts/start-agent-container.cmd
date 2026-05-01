@@ -1,2 +1,2 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0start-agent-container.ps1" %*
+powershell -ExecutionPolicy Bypass -File "%~dp0Internal\start-agent-container.ps1" %*

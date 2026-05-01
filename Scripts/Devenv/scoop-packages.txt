@@ -1,15 +1,9 @@
-git
-# Note: pwsh removed - use system-installed PowerShell 7+ to avoid conflicts
 7zip
 
 # Development tools
-beyondcompare
-clink
-clink-completions
-sqlitebrowser
-fork
 nvm
 insomnia
+opencode
 
 # Terminal tools
 micro

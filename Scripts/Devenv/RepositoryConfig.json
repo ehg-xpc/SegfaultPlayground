@@ -1,5 +1,13 @@
 {
   "repositories": {
+    "Developer": {
+      "folderName": "Developer",
+      "description": "Developer environment and tooling repository",
+      "tabTitle": "Developer",
+      "icon": "%DEV_REPO%\\Resources\\Icons\\Developer.ico",
+      "startingDirectory": "%DEV_REPO%",
+      "commandline": "pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File \"%DEV_REPO%\\Scripts\\Devenv\\UserEnv.ps1\""
+    },
     "Workbench": {
       "folderName": "Workbench",
       "description": "Generic workspace tab with no repo context",

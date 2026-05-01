@@ -13,17 +13,16 @@ ALLOWED_DOMAINS=(
     "sentry.io"
     # npm
     "registry.npmjs.org"
-    # Azure DevOps + auth
-    "dev.azure.com"
-    "vssps.visualstudio.com"
-    "vsrm.visualstudio.com"
-    "login.microsoftonline.com"
-    "management.azure.com"
+    # PyPI
+    "pypi.org"
+    "files.pythonhosted.org"
     # GitHub (git operations, gh CLI)
     "github.com"
     "api.github.com"
     "objects.githubusercontent.com"
     "raw.githubusercontent.com"
+    # OpenCode
+    "opencode.ai"
 )
 
 # Preserve Docker's internal DNS NAT rules before flushing

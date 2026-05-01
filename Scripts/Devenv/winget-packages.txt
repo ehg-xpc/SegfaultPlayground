@@ -1,7 +1,6 @@
 JanDeDobbeleer.OhMyPosh
-Microsoft.AzureCLI
 astral-sh.uv
 Microsoft.PowerToys
 Microsoft.devtunnel
 dandavison.delta
-GitHub.Copilot
+GitHub.cli

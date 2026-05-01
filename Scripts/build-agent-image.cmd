@@ -1,31 +1,33 @@
 @echo off
-:: build-agent-image.cmd - Build the ado-agent Docker image
+:: build-agent-image.cmd - Build the dev-node Docker image
 ::
 :: Usage:
 ::   build-agent-image.cmd
 ::
-:: Builds the image tagged as 'ado-agent' from Docker/ado-agent/Dockerfile.
+:: Builds the image tagged as 'dev-node' from Docker/dev-node/Dockerfile.
 
 setlocal
 
 set "REPO_ROOT=%~dp0.."
-set "CONTEXT=%REPO_ROOT%\Docker\ado-agent"
+set "CONTEXT=%REPO_ROOT%\Docker\dev-node"
 
-echo [build-agent-image] Building ado-agent image...
-docker build -t ado-agent "%CONTEXT%"
+echo [build-agent-image] Building dev-node image...
+docker build -t dev-node "%CONTEXT%"
 
 if %errorlevel% neq 0 (
     echo [build-agent-image] Build failed.
     exit /b %errorlevel%
 )
 
-echo [build-agent-image] Build complete. Verifying claude CLI...
-docker run --rm ado-agent claude --dangerously-skip-permissions --version
+echo [build-agent-image] Build complete. Verifying CLIs...
+docker run --rm dev-node claude --version
+docker run --rm dev-node opencode --version
+docker run --rm dev-node gh --version
 
 if %errorlevel% neq 0 (
-    echo [build-agent-image] Verification failed: claude --version did not succeed.
+    echo [build-agent-image] Verification failed.
     exit /b %errorlevel%
 )
 
-echo [build-agent-image] Image ado-agent is ready.
+echo [build-agent-image] Image dev-node is ready.
 endlocal

@@ -7,8 +7,8 @@
     1. Installing Scoop and winget package managers if not present
     2. Installing essential development tools via Scoop and winget
     3. Installing Node.js and Python
-    4. Running existing configuration scripts (SetupWindowsTerminal, SetupBeyondCompare, etc.)
-    5. Configuring Windows Defender exclusions for dev paths and processes
+    4. Running existing configuration scripts (SetupWindowsTerminal, etc.)
+    5. Configuring environment variables and system policies
 
     The script gracefully handles already-installed components and can be run multiple times safely.
 
@@ -616,70 +616,6 @@ function Install-NodeJS {
     }
 }
 
-function Install-ClaudeCode {
-    Write-Info "Installing Claude Code CLI..."
-
-    # The official installer drops the binary into %USERPROFILE%\.local\bin
-    $claudeLocalBin = Join-Path $env:USERPROFILE ".local\bin"
-
-    # Ensure %USERPROFILE%\.local\bin is in User PATH (installer may not do this)
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($userPath -notlike "*$claudeLocalBin*") {
-        [Environment]::SetEnvironmentVariable("Path", "$userPath;$claudeLocalBin", "User")
-        Write-Success "Added $claudeLocalBin to User PATH"
-    } else {
-        Write-Success "$claudeLocalBin already in User PATH"
-    }
-    if ($env:Path -notlike "*$claudeLocalBin*") {
-        $env:Path = "$env:Path;$claudeLocalBin"
-    }
-
-    if (Get-Command claude -ErrorAction SilentlyContinue) {
-        Write-Success "Claude Code CLI is already installed"
-    } else {
-        try {
-            Write-Info "Running Claude Code official installer..."
-            Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
-            Write-Success "Claude Code CLI installed"
-        } catch {
-            $errorMsg = "Failed to install Claude Code CLI: $($_.Exception.Message)"
-            Write-ErrorMsg $errorMsg
-            Add-ErrorRecord "Claude Code" $errorMsg
-            return
-        }
-    }
-
-}
-
-function Install-NpmArtifactsCredProvider {
-    Write-Info "Installing npm Azure Artifacts credential provider..."
-
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        Update-SessionPath | Out-Null
-        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-            $errorMsg = "npm is not available. Ensure Node.js was installed correctly."
-            Write-ErrorMsg $errorMsg
-            Add-ErrorRecord "npm Artifacts CredProvider" $errorMsg
-            return
-        }
-    }
-
-    try {
-        $installed = npm list -g @microsoft/artifacts-npm-credprovider --depth=0 2>$null | Out-String
-        if ($installed -match "artifacts-npm-credprovider") {
-            Write-Success "npm Azure Artifacts credential provider is already installed"
-        } else {
-            Write-Info "Installing @microsoft/artifacts-npm-credprovider..."
-            npm install --global @microsoft/artifacts-npm-credprovider --registry https://pkgs.dev.azure.com/artifacts-public/PublicTools/_packaging/AzureArtifacts/npm/registry/ 2>&1 | Out-Null
-            Write-Success "npm Azure Artifacts credential provider installed"
-        }
-    } catch {
-        $errorMsg = "Failed to install npm Artifacts credential provider: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "npm Artifacts CredProvider" $errorMsg
-    }
-}
-
 function Configure-Uv {
     Write-Info "Configuring uv Python package manager..."
     
@@ -710,15 +646,11 @@ function Configure-Uv {
 [[index]]
 url = "https://pypi.org/simple"
 default = true
-
-[[index]]
-url = "https://tools.svnx.dev/pypi"
-explicit = true
 "@
 
         Set-Content -Path $uvTomlPath -Value $tomlContent -Encoding UTF8
         Write-Success "Created uv configuration file: $uvTomlPath"
-        Write-Success "Configured default PyPI index and custom index: https://tools.svnx.dev/pypi (explicit)"
+        Write-Success "Configured default PyPI index"
         
     } catch {
         $errorMsg = "Failed to configure uv: $($_.Exception.Message)"
@@ -727,191 +659,35 @@ explicit = true
     }
 }
 
-function Add-MSBuildToPath {
-    Write-Info "Checking for MSBuild in PATH..."
-    
-    # Check if MSBuild is already in PATH
-    if (Get-Command msbuild -ErrorAction SilentlyContinue) {
-        Write-Success "MSBuild is already in PATH"
-        return
-    }
-    
-    # Search for MSBuild from Visual Studio installations
-    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    
-    if (-not (Test-Path $vswhere)) {
-        Write-Info "Visual Studio not detected, MSBuild may not be available yet"
-        return
-    }
-    
-    try {
-        # Find the latest VS installation with MSBuild
-        $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-        
-        if ([string]::IsNullOrEmpty($vsPath)) {
-            Write-Info "MSBuild component not found in Visual Studio installation"
-            return
-        }
-        
-        # Try to find MSBuild.exe
-        $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-        
-        if (-not (Test-Path $msbuildPath)) {
-            # Try older path structure
-            $msbuildPath = Join-Path $vsPath "MSBuild\15.0\Bin\MSBuild.exe"
-        }
-        
-        if (Test-Path $msbuildPath) {
-            $msbuildDir = Split-Path $msbuildPath -Parent
-            
-            # Add to user PATH permanently
-            $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-            if ($currentPath -notlike "*$msbuildDir*") {
-                $newPath = "$currentPath;$msbuildDir"
-                [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-                
-                # Add to current session
-                $env:Path = "$env:Path;$msbuildDir"
-                
-                Write-Success "Added MSBuild to PATH: $msbuildDir"
-            } else {
-                Write-Success "MSBuild directory already in PATH"
-            }
-        } else {
-            Write-Info "MSBuild.exe not found in expected location"
-        }
-    } catch {
-        $errorMsg = "Failed to add MSBuild to PATH: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "MSBuild PATH" $errorMsg
-    }
-}
+function Install-ClaudeCode {
+    Write-Info "Installing Claude Code CLI..."
 
-function Add-AzureCliToPath {
-    Write-Info "Checking for Azure CLI in PATH..."
-    
-    # Check if Azure CLI is already in PATH
-    if (Get-Command az -ErrorAction SilentlyContinue) {
-        Write-Success "Azure CLI is already in PATH"
-        return
-    }
-    
-    # Common Azure CLI installation paths
-    $possiblePaths = @(
-        "${env:ProgramFiles}\Microsoft SDKs\Azure\CLI2\wbin",
-        "${env:ProgramFiles(x86)}\Microsoft SDKs\Azure\CLI2\wbin",
-        "${env:LOCALAPPDATA}\Programs\Microsoft\Azure CLI\wbin"
-    )
-    
-    $azCliPath = $null
-    foreach ($path in $possiblePaths) {
-        $azExe = Join-Path $path "az.cmd"
-        if (Test-Path $azExe) {
-            $azCliPath = $path
-            break
-        }
-    }
-    
-    if (-not $azCliPath) {
-        Write-Info "Azure CLI not detected, may not be installed yet"
-        return
-    }
-    
-    try {
-        # Add to user PATH permanently
-        $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        if ($currentPath -notlike "*$azCliPath*") {
-            $newPath = "$currentPath;$azCliPath"
-            [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-            
-            # Add to current session
-            $env:Path = "$env:Path;$azCliPath"
-            
-            Write-Success "Added Azure CLI to PATH: $azCliPath"
-        } else {
-            Write-Success "Azure CLI directory already in PATH"
-        }
-    } catch {
-        $errorMsg = "Failed to add Azure CLI to PATH: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "Azure CLI PATH" $errorMsg
-    }
-}
+    # The official installer drops the binary into %USERPROFILE%\.local\bin
+    $claudeLocalBin = Join-Path $env:USERPROFILE ".local\bin"
 
-function Add-CopilotCliToPath {
-    Write-Info "Checking for GitHub Copilot CLI in PATH..."
-
-    if (Get-Command copilot -ErrorAction SilentlyContinue) {
-        Write-Success "GitHub Copilot CLI is already in PATH"
-        return
+    # Ensure the bin dir is in User PATH
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($userPath -notlike "*$claudeLocalBin*") {
+        [Environment]::SetEnvironmentVariable("Path", "$userPath;$claudeLocalBin", "User")
+        Write-Success "Added $claudeLocalBin to User PATH"
+    }
+    if ($env:Path -notlike "*$claudeLocalBin*") {
+        $env:Path = "$env:Path;$claudeLocalBin"
     }
 
-    # Winget portable packages land under WinGet\Links (symlinked) or WinGet\Packages
-    $possiblePaths = @(
-        "$env:LOCALAPPDATA\Microsoft\WinGet\Links",
-        "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
-    )
-
-    # Also scan WinGet\Packages for the actual extracted folder
-    $packagesDir = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
-    if (Test-Path $packagesDir) {
-        $copilotDirs = Get-ChildItem -Path $packagesDir -Directory -Filter "GitHub.Copilot*" -ErrorAction SilentlyContinue
-        foreach ($dir in $copilotDirs) {
-            $possiblePaths += $dir.FullName
-        }
-    }
-
-    $copilotPath = $null
-    foreach ($path in $possiblePaths) {
-        $copilotExe = Join-Path $path "copilot.exe"
-        if (Test-Path $copilotExe) {
-            $copilotPath = $path
-            break
-        }
-    }
-
-    if (-not $copilotPath) {
-        Write-Info "GitHub Copilot CLI not detected, may not be installed yet"
+    if (Get-Command claude -ErrorAction SilentlyContinue) {
+        Write-Success "Claude Code CLI is already installed"
         return
     }
 
     try {
-        $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        if ($currentPath -notlike "*$copilotPath*") {
-            [Environment]::SetEnvironmentVariable("Path", "$currentPath;$copilotPath", "User")
-            $env:Path = "$env:Path;$copilotPath"
-            Write-Success "Added GitHub Copilot CLI to PATH: $copilotPath"
-        } else {
-            Write-Success "GitHub Copilot CLI directory already in PATH"
-        }
+        Write-Info "Running Claude Code official installer..."
+        Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
+        Write-Success "Claude Code CLI installed"
     } catch {
-        $errorMsg = "Failed to add GitHub Copilot CLI to PATH: $($_.Exception.Message)"
+        $errorMsg = "Failed to install Claude Code CLI: $($_.Exception.Message)"
         Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "Copilot CLI PATH" $errorMsg
-    }
-}
-
-function Install-AzureCliExtensions {
-    Write-Info "Checking Azure CLI extensions..."
-
-    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
-        Write-Info "Azure CLI not found in PATH, skipping extension install"
-        return
-    }
-
-    $installedExtensions = az extension list --query "[].name" -o tsv 2>$null
-    if ($installedExtensions -contains "azure-devops") {
-        Write-Success "Azure CLI extension 'azure-devops' already installed"
-    } else {
-        try {
-            Write-Info "Installing Azure CLI extension: azure-devops..."
-            az extension add --name azure-devops --yes 2>&1 | Out-Null
-            Write-Success "Azure CLI extension 'azure-devops' installed"
-        } catch {
-            $errorMsg = "Failed to install azure-devops extension: $($_.Exception.Message)"
-            Write-ErrorMsg $errorMsg
-            Add-ErrorRecord "az extension azure-devops" $errorMsg
-        }
+        Add-ErrorRecord "Claude Code" $errorMsg
     }
 }
 
@@ -1131,12 +907,6 @@ function Set-DevRepoEnvironmentVariable {
 }
 
 
-function Set-BuildThrottling {
-    Write-Info "Configuring build throttling environment variables..."
-    $setupScript = Join-Path $PSScriptRoot "SetupBuildThrottling.ps1"
-    & $setupScript
-}
-
 function Set-DarkMode {
     Write-Info "Enabling Dark Mode for Windows..."
     
@@ -1169,30 +939,6 @@ function Set-DarkMode {
         Add-ErrorRecord "Dark Mode" $errorMsg
     }
 }
-
-function Remove-NpmCopilot {
-    Write-Info "Checking for legacy npm-based GitHub Copilot CLI..."
-
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        return
-    }
-
-    try {
-        $installed = npm list -g @github/copilot --depth=0 2>$null | Out-String
-        if ($installed -match "@github/copilot") {
-            Write-Info "Removing legacy @github/copilot npm package (replaced by winget GitHub.Copilot)..."
-            npm uninstall -g @github/copilot 2>&1 | Out-Null
-            Write-Success "Removed legacy @github/copilot npm package"
-        } else {
-            Write-Success "No legacy npm Copilot CLI found"
-        }
-    } catch {
-        $errorMsg = "Failed to remove legacy @github/copilot: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "npm Copilot cleanup" $errorMsg
-    }
-}
-
 
 function Set-TaskbarSearchBox {
     Write-Info "Hiding search box from taskbar..."
@@ -1265,139 +1011,15 @@ function Enable-WindowsSudo {
     }
 }
 
-function Set-PowerManagement {
-    Write-Info "Configuring power management (disable hibernate, Modern Standby, sleep)..."
-
-    try {
-        $setupScript = Join-Path $PSScriptRoot "SetupPowerManagement.ps1"
-        if (-not (Test-Path $setupScript)) {
-            Write-Info "SetupPowerManagement.ps1 not found, skipping"
-            return
-        }
-        & $setupScript -Quiet
-        Write-Success "Power management configured (hibernate, Modern Standby, sleep disabled)"
-    } catch {
-        $errorMsg = "Failed to configure power management: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "Power Management" $errorMsg
-    }
-}
-
-function Set-PowerToysKeepAwake {
-    Write-Info "Configuring PowerToys Keep Awake..."
-
-    try {
-        $settingsDir = Join-Path $env:LOCALAPPDATA "Microsoft\PowerToys\Keep Awake"
-        $settingsFile = Join-Path $settingsDir "settings.json"
-
-        if (-not (Test-Path $settingsDir)) {
-            New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
-        }
-
-        # Read existing settings so we don't clobber unrelated keys
-        $settings = $null
-        if (Test-Path $settingsFile) {
-            try { $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json } catch { $settings = $null }
-        }
-
-        if (-not $settings) {
-            $settings = [PSCustomObject]@{
-                version    = "1.0"
-                name       = "KeepAwake"
-                properties = [PSCustomObject]@{}
-            }
-        }
-
-        if (-not $settings.properties) {
-            $settings | Add-Member -NotePropertyName "properties" -NotePropertyValue ([PSCustomObject]@{}) -Force
-        }
-
-        # keepawake_start_mode: 0 = off, 1 = indefinite, 2 = timed
-        $settings.properties | Add-Member -NotePropertyName "keepawake_start_mode"   -NotePropertyValue ([PSCustomObject]@{ value = 1 })    -Force
-        $settings.properties | Add-Member -NotePropertyName "keepawake_keep_screen_on" -NotePropertyValue ([PSCustomObject]@{ value = $true }) -Force
-
-        $settings | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsFile -Encoding UTF8
-        Write-Success "PowerToys Keep Awake: indefinite mode, screen on"
-
-    } catch {
-        $errorMsg = "Failed to configure PowerToys Keep Awake: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "PowerToys Keep Awake" $errorMsg
-    }
-}
-
-function Setup-KeepAlive {
-    Write-Info "Registering keep-alive scheduled task..."
-
-    try {
-        $setupScript = Join-Path $PSScriptRoot "SetupKeepAlive.ps1"
-        if (-not (Test-Path $setupScript)) {
-            Write-Info "SetupKeepAlive.ps1 not found, skipping"
-            return
-        }
-        & $setupScript
-        Write-Success "Keep-alive task registered"
-    } catch {
-        $errorMsg = "Failed to register keep-alive task: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "KeepAlive" $errorMsg
-    }
-}
-
-function Setup-Stanley {
-    $stanleyScript = Join-Path $PSScriptRoot "SetupStanley.ps1"
-    if (-not (Test-Path $stanleyScript)) {
-        Write-Info "SetupStanley.ps1 not found, skipping"
-        return
-    }
-    try {
-        & $stanleyScript
-        Write-Success "Stanley configured"
-    } catch {
-        $errorMsg = "Failed to configure Stanley: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "Stanley" $errorMsg
-    }
-}
-
-function Install-Agency {
-    Write-Info "Installing Agency..."
-
-    if (Get-Command agency -ErrorAction SilentlyContinue) {
-        Write-Success "Agency is already installed"
-        return
-    }
-
-    try {
-        iex "& { $(irm aka.ms/InstallTool.ps1)} agency"
-        Update-SessionPath | Out-Null
-        Write-Success "Agency installed"
-    } catch {
-        $errorMsg = "Failed to install Agency: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "Agency" $errorMsg
-    }
-}
-
 function Run-SetupScripts {
     Write-Info "Running configuration scripts..."
 
     $scriptsPath = Join-Path $PSScriptRoot ".."
 
     $setupScripts = @(
-        "Devenv/SetupDefenderExclusions.ps1",
         "Devenv/SetupWindowsTerminal.ps1",
-        "Devenv/SetupBeyondCompare.ps1",
-        "Devenv/SetupClink.ps1",
-        "Devenv/SetupSharedClaude.ps1",
         "Maintenance/SetupRepoMaintenance.ps1"
     )
-
-    if ($FullSetup) {
-        $setupScripts += "Devenv/SetupAgentContainerEnv.ps1"
-    } else {
-        Write-Info "Skipping SetupAgentContainerEnv (pass -FullSetup to run)"
-    }
 
     foreach ($script in $setupScripts) {
         $scriptPath = Join-Path $scriptsPath $script
@@ -1413,6 +1035,35 @@ function Run-SetupScripts {
             $errorMsg = "$script failed: $($_.Exception.Message)"
             Write-ErrorMsg $errorMsg
             Add-ErrorRecord "Setup Scripts" $errorMsg
+        }
+    }
+}
+
+function Confirm-ToolsOnPath {
+    Write-Info "Verifying essential tools are on PATH..."
+
+    # Final refresh to pick up anything registered by earlier steps
+    Update-SessionPath | Out-Null
+
+    $tools = @(
+        @{ Name = "python";   Label = "Python" },
+        @{ Name = "uv";       Label = "uv" },
+        @{ Name = "nvm";      Label = "nvm" },
+        @{ Name = "node";     Label = "Node.js" },
+        @{ Name = "npm";      Label = "npm" },
+        @{ Name = "git";      Label = "Git" },
+        @{ Name = "gh";       Label = "GitHub CLI" },
+        @{ Name = "opencode"; Label = "OpenCode CLI" },
+        @{ Name = "claude";   Label = "Claude Code CLI" }
+    )
+
+    foreach ($tool in $tools) {
+        if (Get-Command $tool.Name -ErrorAction SilentlyContinue) {
+            Write-Success "$($tool.Label) ($($tool.Name)) is on PATH"
+        } else {
+            $errorMsg = "$($tool.Label) ($($tool.Name)) is NOT on PATH -- may need a terminal restart"
+            Write-ErrorMsg $errorMsg
+            Add-ErrorRecord "PATH Check" $errorMsg
         }
     }
 }
@@ -1452,20 +1103,12 @@ function Main {
         Install-Python
         Install-NodeJS
         Install-ClaudeCode
-        Install-Agency
-        Install-NpmArtifactsCredProvider
-
-        Remove-NpmCopilot
 
         Configure-Uv
 
         # Configure development environment
         Write-Section "Configuring Development Environment"
         Add-GitToPath
-        Add-MSBuildToPath
-        Add-AzureCliToPath
-        Add-CopilotCliToPath
-        Install-AzureCliExtensions
         Set-GitGlobalConfig
 
         # Set up environment variables
@@ -1473,19 +1116,11 @@ function Main {
         Set-EditorEnvironmentVariable
         Set-ReposEnvironmentVariable
         Set-DevRepoEnvironmentVariable
-        Set-BuildThrottling
-
-        # Set up Stanley
-        Write-Section "Setting Up Stanley"
-        Setup-Stanley
 
         # System policy settings
         Write-Section "Configuring System Policies"
         Set-UacPolicy
         Enable-WindowsSudo
-        Set-PowerManagement
-        Set-PowerToysKeepAwake
-        Setup-KeepAlive
 
         # Enable Dark Mode and Configure Taskbar (opt-in)
         if ($ExplorerSettings) {
@@ -1501,6 +1136,10 @@ function Main {
         # Run existing configuration scripts (all)
         Write-Section "Running Configuration Scripts"
         Run-SetupScripts
+
+        # Verify all essential tools are reachable
+        Write-Section "Verifying Tools on PATH"
+        Confirm-ToolsOnPath
 
         Write-Section "Setup Complete"
 
