@@ -2,6 +2,7 @@
   "repositories": {
     "Developer": {
       "folderName": "Developer",
+      "url": "https://github.com/ehg-xpc/Developer",
       "description": "Developer environment and tooling repository",
       "tabTitle": "Developer",
       "icon": "%DEV_REPO%\\Resources\\Icons\\Developer.ico",
@@ -20,5 +21,5 @@
   "groups": {},
   "baseReposPath": "%Repos%",
   "defaultBranch": "main",
-  "defaultProfile": "Workbench"
+  "defaultProfile": "Developer"
 }

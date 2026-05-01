@@ -6,6 +6,8 @@ insomnia
 opencode
 
 # Terminal tools
+clink
+clink-completions
 micro
 glow
 

@@ -287,6 +287,20 @@ if (Test-Path $repoConfigPath) {
         $supersededGuids = if ($repoCfg.PSObject.Properties['supersededProfiles']) { @($repoCfg.supersededProfiles) } else { @() }
         $allRetireGuids  = $allGenGuids + $supersededGuids
 
+        # --- Pre-create local-only repo directories so WT startingDirectory resolves ---
+        $expandedBase = [Environment]::ExpandEnvironmentVariables($repoCfg.baseReposPath)
+        foreach ($prop in $repoCfg.repositories.PSObject.Properties) {
+            $repo = $prop.Value
+            if (-not ($repo.PSObject.Properties['url'] -and $repo.url)) {
+                $folderName = if ($repo.PSObject.Properties['folderName'] -and $repo.folderName) { $repo.folderName } else { $prop.Name }
+                $repoPath = Join-Path $expandedBase $folderName
+                if (-not (Test-Path $repoPath)) {
+                    New-Item -ItemType Directory -Path $repoPath -Force | Out-Null
+                    Write-Host "Created local directory: $repoPath"
+                }
+            }
+        }
+
         # --- Profiles ---
         $repoJson.profiles.list = @($repoJson.profiles.list | Where-Object { $allRetireGuids -notcontains $_.guid })
         $repoJson.profiles.list = $generatedProfiles + @($repoJson.profiles.list)
@@ -309,7 +323,12 @@ if (Test-Path $repoConfigPath) {
                 [PSCustomObject]@{ type = "remainingProfiles" },
                 [PSCustomObject]@{ type = "separator" }
             )
-            $repoJson.newTabMenu = @($generatedMenu + $existing + $tail | Where-Object { $null -ne $_ })
+            $newMenu = @($generatedMenu + $existing + $tail | Where-Object { $null -ne $_ })
+            if ($repoJson.PSObject.Properties['newTabMenu']) {
+                $repoJson.newTabMenu = $newMenu
+            } else {
+                $repoJson | Add-Member -MemberType NoteProperty -Name 'newTabMenu' -Value $newMenu
+            }
             Write-Host "Injected $($generatedMenu.Count) group folder(s) into newTabMenu"
         }
     }

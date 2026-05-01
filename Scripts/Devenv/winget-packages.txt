@@ -4,3 +4,4 @@ Microsoft.PowerToys
 Microsoft.devtunnel
 dandavison.delta
 GitHub.cli
+Microsoft.PowerShell
