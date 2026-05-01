@@ -23,7 +23,7 @@ This template is designed to be forked. A downstream fork keeps a `template`
 remote pointing at this repository and pulls in updates over time:
 
 ```
-git remote add template <this-repo-url>
+git remote add template https://github.com/ehg-xpc/SegfaultPlayground
 git fetch template
 git merge template/main
 ```
