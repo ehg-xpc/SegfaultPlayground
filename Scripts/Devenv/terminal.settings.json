@@ -121,7 +121,7 @@
                                       "name":  "Command Prompt"
                                   },
                                   {
-                                      "commandline":  "pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File \"%Repos%\\developer\\edgarhg\\scripts\\DevEnv\\UserEnv.ps1\"",
+                                      "commandline":  "pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File \"%DEV_REPO%\\scripts\\DevEnv\\UserEnv.ps1\"",
                                       "guid":  "{e8b01001-ed9a-4a01-b001-00000000000d}",
                                       "name":  "PowerShell",
                                       "startingDirectory":  "%USERPROFILE%"
