@@ -45,16 +45,11 @@ if (Test-Path $showBannerScript) {
     . $showBannerScript
 }
 
-# Log repository info and inject agent context (after banner)
+# Log repository info (after banner)
 if ($RepositoryName -and $repoPath -and (Test-Path $repoPath)) {
     Write-Host "Repository: $RepositoryName" -ForegroundColor Green
     if ($RepoScriptsPath) {
         Write-Host "Scripts: Repos\$RepositoryName" -ForegroundColor Cyan
-    }
-
-    $agentContextScript = Join-Path $PSScriptRoot "SetupSharedAgentContext.ps1"
-    if (Test-Path $agentContextScript) {
-        & $agentContextScript -RepoName $RepositoryName -RepoPath $repoPath
     }
 
     Write-Host ""

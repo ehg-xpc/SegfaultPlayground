@@ -1,13 +1,11 @@
 {
   "repositories": {
     "Developer": {
+      "url": "https://your-org.visualstudio.com/YourProject/_git/YourDevRepo",
       "folderName": "Developer",
-      "url": "https://github.com/ehg-xpc/Developer",
-      "description": "Developer environment and tooling repository",
-      "tabTitle": "Developer",
-      "icon": "%DEV_REPO%\\Resources\\Icons\\Developer.ico",
-      "startingDirectory": "%DEV_REPO%",
-      "commandline": "pwsh.exe -NoLogo -NoExit -ExecutionPolicy Bypass -File \"%DEV_REPO%\\Scripts\\Devenv\\UserEnv.ps1\""
+      "description": "Personal development environment repository",
+      "tabTitle": "Devenv",
+      "icon": "%DEV_REPO%\\Resources\\Icons\\Developer.ico"
     },
     "Workbench": {
       "folderName": "Workbench",

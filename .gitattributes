@@ -16,6 +16,8 @@
 # Python version files should use LF line endings (Python ecosystem standard)
 .python-version text eol=lf
 
+# Windows Terminal settings should use CRLF line endings (Windows application)
+terminal.settings.json text eol=crlf
 
 # Mark binary files
 *.exe binary
@@ -26,3 +28,11 @@
 *.gif binary
 *.ico binary
 *.zip binary
+
+# These paths intentionally diverge from the upstream template in forks.
+# The 'ours' merge driver keeps the fork version on every merge.
+# Run `git config merge.ours.driver true` once per clone (also wired into
+# Scripts\Devenv\SetupDevice.ps1).
+Scripts/Devenv/RepositoryConfig.json merge=ours
+Scripts/Devenv/config.json merge=ours
+README.md merge=ours

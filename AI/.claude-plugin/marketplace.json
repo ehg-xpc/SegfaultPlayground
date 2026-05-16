@@ -1,0 +1,9 @@
+{
+  "name": "local-plugins",
+  "description": "Local plugin marketplace — skills shared across Claude Code and GitHub Copilot CLI on every device.",
+  "owner": {
+    "name": "Your Name",
+    "email": "you@example.com"
+  },
+  "plugins": []
+}
