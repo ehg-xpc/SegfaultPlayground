@@ -1,0 +1,5 @@
+# Plugins from %dev_repo%\AI to install user-wide on every device.
+# One plugin name per line. Lines starting with # and blank lines are ignored.
+# Plugins not listed here stay opt-in and should be installed manually with
+# `claude plugin install <name>@<marketplace> --scope project` from inside
+# the repo where they are useful.

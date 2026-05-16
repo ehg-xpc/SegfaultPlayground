@@ -30,10 +30,47 @@ $status = git -C $RepoPath status --porcelain 2>&1
 if (-not [string]::IsNullOrWhiteSpace($status)) {
     Write-Host "Stashing local changes..."
     $stashMsg = "RepoMaintenance auto-stash $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
-    git -C $RepoPath stash push -m $stashMsg
+    $stashOutput = git -C $RepoPath stash push -m $stashMsg 2>&1
+    $stashOutput | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: stash failed"
-        exit 1
+        # Recover from line-ending normalization failures. When core.safecrlf
+        # blocks a stash with "fatal: LF would be replaced by CRLF in <path>"
+        # (or the inverse), re-checkout the offending paths to align the worktree
+        # with the index, then retry. Without this, autocrlf drift on a single
+        # file wedges every subsequent maintenance run on the affected repo.
+        $stashText = ($stashOutput | Out-String)
+        $affected = [regex]::Matches($stashText, 'would be replaced by (?:CRLF|LF) in (.+)') |
+                    ForEach-Object { $_.Groups[1].Value.Trim() } |
+                    Where-Object { $_ } |
+                    Select-Object -Unique
+
+        if ($affected.Count -eq 0) {
+            Write-Host "ERROR: stash failed"
+            exit 1
+        }
+
+        Write-Host "Stash blocked by line-ending mismatch on $($affected.Count) file(s); re-checking-out to normalize..."
+        foreach ($file in $affected) {
+            Write-Host "  git checkout -- $file"
+            git -C $RepoPath checkout -- $file
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "ERROR: checkout failed for '$file'"
+                exit 1
+            }
+        }
+
+        # If normalization absorbed all of the dirt, no stash is needed.
+        $status = git -C $RepoPath status --porcelain 2>&1
+        if ([string]::IsNullOrWhiteSpace($status)) {
+            Write-Host "Worktree clean after line-ending normalization; no stash needed."
+        } else {
+            Write-Host "Retrying stash after line-ending normalization..."
+            git -C $RepoPath stash push -m $stashMsg
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "ERROR: stash failed after normalization"
+                exit 1
+            }
+        }
     }
 }
 

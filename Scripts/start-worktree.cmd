@@ -1,2 +1,2 @@
 @echo off
-uv run "%~dp0Internal\start-worktree.py" %*
+uv run "%~dp0Worktree\start-worktree.py" %*

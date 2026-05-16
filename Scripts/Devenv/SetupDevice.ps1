@@ -7,13 +7,17 @@
     1. Installing Scoop and winget package managers if not present
     2. Installing essential development tools via Scoop and winget
     3. Installing Node.js and Python
-    4. Running existing configuration scripts (SetupWindowsTerminal, etc.)
-    5. Configuring environment variables and system policies
+    4. Running existing configuration scripts (SetupWindowsTerminal, SetupBeyondCompare, etc.)
+    5. Configuring Windows Defender exclusions for dev paths and processes
 
     The script gracefully handles already-installed components and can be run multiple times safely.
 
 .PARAMETER ExplorerSettings
     Apply Windows Explorer settings (Dark Mode and Taskbar configuration). Skipped by default.
+
+.PARAMETER RemoteNode
+    Configure power management, PowerToys Keep Awake, and KeepAlive scheduled task so the device
+    stays on and reachable. Intended for remote dev nodes; skipped by default on personal machines.
 
 .PARAMETER FullSetup
     Install additional components like Docker Desktop that are skipped by default.
@@ -25,6 +29,9 @@
     .\SetupDevice.ps1 -ExplorerSettings
 
 .EXAMPLE
+    .\SetupDevice.ps1 -RemoteNode
+
+.EXAMPLE
     .\SetupDevice.ps1 -FullSetup
 
 .NOTES
@@ -34,6 +41,7 @@
 
 param(
     [switch]$ExplorerSettings,
+    [switch]$RemoteNode,
     [switch]$FullSetup
 )
 
@@ -89,11 +97,54 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 # Track errors during execution
 $script:errors = @()
 
+# Verbose output from sub-scripts is appended here instead of being shown in
+# the terminal. The path is announced at start and again in the final summary.
+$script:logFile = Join-Path $env:TEMP ("SetupDevice-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+
 function Add-ErrorRecord {
     param([string]$Component, [string]$Message)
     $script:errors += @{
         Component = $Component
         Message = $Message
+    }
+}
+
+function Invoke-SubScript {
+    <#
+    .SYNOPSIS
+        Runs a child setup script and appends all of its output streams to the
+        SetupDevice log file instead of the terminal.
+    .DESCRIPTION
+        Keeps the parent terminal output focused on high-level progress while
+        still preserving the full sub-script output for troubleshooting. Any
+        terminating error is captured, surfaced as a one-line failure in the
+        terminal, and recorded against the supplied $Component label.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [object[]]$ArgumentList = @(),
+        [string]$Component
+    )
+
+    $name = Split-Path $Path -Leaf
+    if (-not $Component) { $Component = $name }
+
+    if (-not (Test-Path $Path)) {
+        Write-Info "$name not found, skipping"
+        return
+    }
+
+    Write-Info "Running $name (output -> log file)..."
+    "`n=== $(Get-Date -Format o) :: $name ===" | Out-File -FilePath $script:logFile -Append -Encoding UTF8
+
+    try {
+        & $Path @ArgumentList *>&1 | Out-File -FilePath $script:logFile -Append -Encoding UTF8
+        Write-Success "$name completed"
+    } catch {
+        $errorMsg = "${name} failed: $($_.Exception.Message)"
+        Write-ErrorMsg $errorMsg
+        Write-Info "See log for details: $script:logFile"
+        Add-ErrorRecord $Component $errorMsg
     }
 }
 
@@ -154,17 +205,106 @@ function Update-SessionPath {
         $trimmed
     }
 
-    $localBin = Join-Path $env:USERPROFILE ".local\bin"
-    if ((Test-Path $localBin -ErrorAction SilentlyContinue) -and -not $current.ContainsKey($localBin.ToLowerInvariant())) {
-        $pathsToAdd += $localBin
-    }
-
     if ($pathsToAdd) {
         $env:Path = $env:Path + ";" + ($pathsToAdd -join ";")
         Write-Verbose "Added $($pathsToAdd.Count) path(s) to current session"
         return $pathsToAdd.Count
     }
     return 0
+}
+
+function Add-PathEntry {
+    <#
+    .SYNOPSIS
+        Idempotently adds a directory to the registry PATH (User or Machine) and
+        the current session PATH, with optional binary verification.
+    .DESCRIPTION
+        Replaces the half-dozen ad-hoc "if ($userPath -notlike "*$dir*") { write }"
+        blocks scattered through this script. Uses normalized, case-insensitive,
+        exact-match deduplication so 'C:\Tools\x' is not falsely treated as
+        present when 'C:\Tools\xyz' is on PATH (substring match was a long-standing
+        bug in the per-tool helpers).
+
+        Refuses to write a directory that does not exist on disk so we don't
+        litter PATH with paths from failed installers.
+
+        When VerifyCommand is provided, runs Get-Command afterwards and records a
+        structured failure via Add-ErrorRecord if the binary still isn't
+        resolvable -- making install-time PATH problems visible in the final
+        summary instead of surfacing as runtime "command not found" later.
+
+        Also warns when the User PATH would approach the 2047-char Windows limit.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [ValidateSet('User','Machine')][string]$Scope = 'User',
+        [string]$VerifyCommand,
+        [string]$Component
+    )
+
+    if (-not $Directory) { return $false }
+    $normalized = $Directory.Trim().TrimEnd('\')
+    if (-not $normalized) { return $false }
+
+    if (-not (Test-Path $normalized -ErrorAction SilentlyContinue)) {
+        Write-Info "PATH target does not exist (skipped): $normalized"
+        return $false
+    }
+
+    $key = $normalized.ToLowerInvariant()
+
+    # Registry scope (persistent)
+    $current = [Environment]::GetEnvironmentVariable("Path", $Scope)
+    $alreadyInScope = $false
+    if ($current) {
+        foreach ($entry in $current -split ';') {
+            $candidate = $entry.Trim().TrimEnd('\').ToLowerInvariant()
+            if ($candidate -eq $key) { $alreadyInScope = $true; break }
+        }
+    }
+
+    if (-not $alreadyInScope) {
+        $projectedLength = if ($current) { $current.Length + 1 + $normalized.Length } else { $normalized.Length }
+        if ($Scope -eq 'User' -and $projectedLength -gt 1900) {
+            Write-Info "WARNING: User PATH would reach $projectedLength chars after adding '$normalized' (Windows limit ~2047). Consider pruning stale entries."
+        }
+        $newValue = if ($current) { "$current;$normalized" } else { $normalized }
+        [Environment]::SetEnvironmentVariable("Path", $newValue, $Scope)
+        Write-Success "Added to $Scope PATH: $normalized"
+    }
+
+    # Current session
+    $alreadyInSession = $false
+    foreach ($entry in $env:Path -split ';') {
+        $candidate = $entry.Trim().TrimEnd('\').ToLowerInvariant()
+        if ($candidate -eq $key) { $alreadyInSession = $true; break }
+    }
+    if (-not $alreadyInSession) {
+        $env:Path = if ($env:Path) { "$env:Path;$normalized" } else { $normalized }
+    }
+
+    # Verification: confirm the tool is actually resolvable now
+    if ($VerifyCommand) {
+        if (Get-Command $VerifyCommand -ErrorAction SilentlyContinue) {
+            return $true
+        }
+        $label = if ($Component) { $Component } else { "PATH ($VerifyCommand)" }
+        $msg = "$VerifyCommand still not resolvable after adding $normalized to PATH"
+        Write-ErrorMsg $msg
+        Add-ErrorRecord $label $msg
+        return $false
+    }
+    return $true
+}
+
+function Add-ScoopShimsToPath {
+    <#
+    .SYNOPSIS
+        Ensures the Scoop shims directory is on PATH so Scoop-installed CLIs
+        (git, delta, micro, jq, ...) are discoverable without a terminal restart.
+    #>
+    $shims = Join-Path $env:USERPROFILE "scoop\shims"
+    Add-PathEntry -Directory $shims -Scope User -Component "Scoop shims" | Out-Null
 }
 
 function Install-Winget {
@@ -353,15 +493,10 @@ function Install-ScoopPackages {
     # If bucket reset is needed, reset and retry failed packages
     if ($bucketResetNeeded) {
         Write-Info "Attempting to fix Scoop buckets and retry installations..."
-        
-        # Call the ResetScoopBuckets script
+
         $resetScript = Join-Path $PSScriptRoot "ResetScoopBuckets.ps1"
-        if (Test-Path $resetScript) {
-            & pwsh.exe -ExecutionPolicy Bypass -File $resetScript
-        } else {
-            Write-ErrorMsg "ResetScoopBuckets.ps1 not found at: $resetScript"
-        }
-        
+        Invoke-SubScript -Path $resetScript -Component "ResetScoopBuckets"
+
         Write-Info "Retrying failed package installations..."
         foreach ($package in $failedPackages) {
             try {
@@ -451,31 +586,41 @@ function Install-DockerDesktop {
 
     Write-Info "Installing Docker Desktop..."
     # Docker Desktop requires machine scope; do not pass --scope user
-    winget install --id Docker.DockerDesktop --source winget --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+    $installOutput = winget install --id Docker.DockerDesktop --source winget --silent --accept-source-agreements --accept-package-agreements 2>&1
+    $installExitCode = $LASTEXITCODE
 
     winget list --id Docker.DockerDesktop --exact --accept-source-agreements 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-Success "Installed Docker Desktop"
     } else {
-        $errorMsg = "Docker Desktop installation could not be verified"
+        $errorMsg = "Docker Desktop installation failed (exit code $installExitCode): $installOutput"
         Write-ErrorMsg $errorMsg
         Add-ErrorRecord "Docker Desktop" $errorMsg
     }
 }
 
-function Disable-PythonAppExecutionAliases {
-    Write-Info "Removing Python app execution aliases from WindowsApps..."
+function Disable-AppExecutionAliases {
+    <#
+    .SYNOPSIS
+        Removes Windows App Execution Alias stubs in %LOCALAPPDATA%\Microsoft\WindowsApps
+        so they do not shadow real binaries on PATH.
+    .DESCRIPTION
+        App Execution Aliases are 0-byte NTFS reparse points that redirect to a
+        Microsoft Store install prompt when invoked. We can't uninstall the AppX
+        package that provides them (often DesktopAppInstaller, which also
+        provides winget) but we can safely delete the alias stubs themselves.
 
-    # The python.exe/python3.exe stubs in WindowsApps are App Execution Aliases
-    # shipped by DesktopAppInstaller (winget). They are 0-byte NTFS reparse points
-    # that redirect to a "Python not found, install from Store" prompt.
-    # Since we use uv-managed Python, these just cause confusion.
-    # We can't uninstall DesktopAppInstaller (it provides winget), but we can
-    # safely delete the alias files themselves.
+        Generalized from the original Python-only helper so future shadowing
+        cases (or any tool that ships an installable Store stub) can be added
+        with a single line in the Aliases list.
+    #>
+    param(
+        [Parameter(Mandatory)][string[]]$Aliases,
+        [string]$Component = "App Execution Aliases"
+    )
+
     $storeAppsPath = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps"
-    $aliases = @("python.exe", "python3.exe")
-
-    foreach ($alias in $aliases) {
+    foreach ($alias in $Aliases) {
         $aliasPath = Join-Path $storeAppsPath $alias
         if (Test-Path $aliasPath) {
             try {
@@ -483,7 +628,7 @@ function Disable-PythonAppExecutionAliases {
                 Write-Success "Removed app execution alias: $alias"
             } catch {
                 Write-ErrorMsg "Could not remove ${alias}: $($_.Exception.Message)"
-                Add-ErrorRecord "Python Aliases" "Failed to remove ${alias}: $($_.Exception.Message)"
+                Add-ErrorRecord $Component "Failed to remove ${alias}: $($_.Exception.Message)"
             }
         } else {
             Write-Success "Alias already removed: $alias"
@@ -506,8 +651,10 @@ function Install-Python {
         }
     }
 
-    # Disable Windows Store Python aliases that interfere with uv-managed Python
-    Disable-PythonAppExecutionAliases
+    # Disable Windows Store Python aliases that interfere with uv-managed Python.
+    # The python.exe/python3.exe stubs redirect to a Store install prompt and
+    # shadow uv-managed Python on PATH.
+    Disable-AppExecutionAliases -Aliases @("python.exe", "python3.exe") -Component "Python Aliases"
 
     try {
         # Check if Python is installed via Scoop and remove it
@@ -540,66 +687,9 @@ function Install-Python {
             
             Write-Success "Python 3.12.1 installed via uv"
         }
-        
-        # Update PATH for current session
-        Update-SessionPath | Out-Null
 
-        # Ensure python.exe and python3.exe trampolines exist in ~/.local/bin
-        # so bare "python" works for tools that don't use "uv run"
-        $localBin = Join-Path $env:USERPROFILE ".local\bin"
-        if (-not (Test-Path $localBin)) {
-            New-Item -ItemType Directory -Path $localBin -Force | Out-Null
-        }
-
-        $trampoline = Get-ChildItem -Path $localBin -Filter "python3.*.exe" -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-
-        if (-not $trampoline) {
-            $uvPythonPath = uv python find 3.12.1 2>$null | Out-String
-            $uvPythonPath = $uvPythonPath -replace '\s+', ''
-            if ($uvPythonPath -and (Test-Path $uvPythonPath)) {
-                $trampoline = Get-Item -Path $uvPythonPath
-            } else {
-                $uvPythonList = uv python list 2>&1 | Out-String
-                if ($uvPythonList -match '([A-Za-z]:\\[^\r\n]*python\.exe)') {
-                    $uvPythonPath = $Matches[1].Trim()
-                    if (Test-Path $uvPythonPath) {
-                        $trampoline = Get-Item -Path $uvPythonPath
-                    }
-                }
-            }
-        }
-
-        if ($trampoline) {
-            $pythonPath = $trampoline.FullName
-
-            # Remove any stale Python executables from ~/.local/bin so the wrappers win.
-            Get-ChildItem -Path $localBin -Filter "python*.exe" -File -ErrorAction SilentlyContinue |
-                ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
-
-            foreach ($name in @("python.cmd", "python3.cmd")) {
-                $dest = Join-Path $localBin $name
-                $wrapper = "@echo off`r`n"
-                $wrapper += '"' + $pythonPath + '" %*'
-                Set-Content -Path $dest -Value $wrapper -Encoding ASCII
-                Write-Success "Created $name wrapper in ~/.local/bin"
-            }
-
-            foreach ($name in @("pip.cmd", "pip3.cmd")) {
-                $dest = Join-Path $localBin $name
-                $wrapper = "@echo off`r`n"
-                $wrapper += '"' + $pythonPath + '" -m pip %*'
-                Set-Content -Path $dest -Value $wrapper -Encoding ASCII
-                Write-Success "Created $name wrapper in ~/.local/bin"
-            }
-
-            if ($env:Path -notlike "*$localBin*") {
-                $env:Path = "$env:Path;$localBin"
-            }
-            Update-SessionPath | Out-Null
-        } else {
-            Write-Info "No local Python executable found to create trampolines in ~/.local/bin -- bare 'python' may not be on PATH"
-        }
+        # uv-managed Python isn't placed on PATH (it's invoked via 'uv run' or
+        # an active venv), so no session-PATH refresh is needed here.
 
         # Verify installation
         $pythonVersion = uv python list 2>&1 | Out-String
@@ -618,30 +708,27 @@ function Install-Python {
 
 function Install-NodeJS {
     Write-Info "Installing Node.js via nvm..."
-    
-    if (-not (Get-Command nvm -ErrorAction SilentlyContinue)) {
-        # nvm-windows installed via Scoop does not add itself to PATH automatically.
-        # Explicitly register the nvm directory in User PATH and the current session.
-        $nvmDir = Join-Path $env:USERPROFILE "scoop\apps\nvm\current"
-        $nvmExe = Join-Path $nvmDir "nvm.exe"
 
-        if (Test-Path $nvmExe) {
-            Write-Info "nvm found at $nvmDir — adding to PATH"
-            $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-            if ($userPath -notlike "*$nvmDir*") {
-                [Environment]::SetEnvironmentVariable("PATH", "$userPath;$nvmDir", "User")
-            }
-            $env:Path = "$env:Path;$nvmDir"
-        } else {
+    # nvm-windows installed via Scoop does not add itself to PATH automatically;
+    # ensure it is on PATH before we try to invoke it.
+    if (-not (Get-Command nvm -ErrorAction SilentlyContinue)) {
+        $nvmDir = Get-NvmRootDir
+        if ($nvmDir) {
+            Add-PathEntry -Directory $nvmDir -Scope User -Component "Node.js" | Out-Null
+        }
+        if (-not (Get-Command nvm -ErrorAction SilentlyContinue)) {
             Write-ErrorMsg "nvm is not available. Please ensure it was installed correctly."
             Add-ErrorRecord "Node.js" "nvm not available"
             return
         }
     }
-    
+
     try {
-        $nvmList = nvm list 2>$null
-        if ($nvmList -match "24\.0\.0") {
+        # Check the installed version via the filesystem instead of capturing nvm output.
+        # nvm-windows shows a GUI "Terminal Only" dialog when its stdout/stderr is redirected
+        # to a pipe by PowerShell output capture ($var = nvm ...).
+        $nvmHome = if ($env:NVM_HOME) { $env:NVM_HOME } else { Join-Path $env:APPDATA "nvm" }
+        if (Test-Path (Join-Path $nvmHome "v24.0.0")) {
             Write-Success "Node.js 24.0.0 is already installed"
             nvm use 24.0.0
         } else {
@@ -650,22 +737,13 @@ function Install-NodeJS {
             nvm use 24.0.0
             Write-Success "Node.js 24.0.0 installed and activated"
         }
-        
-        # nvm-windows places node/npm in a symlink directory; ensure it is in PATH.
-        # "nvm root" outputs "Current Root: <path>" so we strip the prefix.
-        $nvmRootOutput = nvm root 2>$null | Out-String
-        if ($nvmRootOutput -match 'Current Root:\s*(.+)') {
-            $nvmRoot = $Matches[1].Trim()
-            $nodeSymlink = Join-Path $nvmRoot "nodejs"
-            if ((Test-Path $nodeSymlink) -and ($env:Path -notlike "*$nodeSymlink*")) {
-                $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-                if ($userPath -notlike "*$nodeSymlink*") {
-                    [Environment]::SetEnvironmentVariable("Path", "$userPath;$nodeSymlink", "User")
-                }
-                $env:Path = "$env:Path;$nodeSymlink"
-            }
+
+        # nvm-windows places node/npm in a symlink directory it manages; ensure it
+        # is on PATH so the rest of this script (npm credprovider, etc.) can find node.
+        $nodeSymlink = Get-NodeSymlinkDir
+        if ($nodeSymlink) {
+            Add-PathEntry -Directory $nodeSymlink -Scope User -Component "Node.js" | Out-Null
         }
-        Update-SessionPath | Out-Null
 
         $nodeVersion = node --version 2>$null
         if ($nodeVersion) {
@@ -675,6 +753,58 @@ function Install-NodeJS {
         $errorMsg = "Failed to install Node.js: $($_.Exception.Message)"
         Write-ErrorMsg $errorMsg
         Add-ErrorRecord "Node.js" $errorMsg
+    }
+}
+
+function Install-ClaudeCode {
+    Write-Info "Installing Claude Code CLI..."
+
+    if (Get-Command claude -ErrorAction SilentlyContinue) {
+        Write-Success "Claude Code CLI is already installed"
+        return
+    }
+
+    try {
+        Write-Info "Running Claude Code official installer..."
+        Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
+        Write-Success "Claude Code CLI installer completed"
+    } catch {
+        $errorMsg = "Failed to install Claude Code CLI: $($_.Exception.Message)"
+        Write-ErrorMsg $errorMsg
+        Add-ErrorRecord "Claude Code" $errorMsg
+        return
+    }
+
+    # PATH registration for %USERPROFILE%\.local\bin happens in Reconcile-ToolPaths
+    # so we don't litter PATH with an entry for a failed install.
+}
+
+function Install-NpmArtifactsCredProvider {
+    Write-Info "Installing npm Azure Artifacts credential provider..."
+
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        Update-SessionPath | Out-Null
+        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+            $errorMsg = "npm is not available. Ensure Node.js was installed correctly."
+            Write-ErrorMsg $errorMsg
+            Add-ErrorRecord "npm Artifacts CredProvider" $errorMsg
+            return
+        }
+    }
+
+    try {
+        $installed = npm list -g @microsoft/artifacts-npm-credprovider --depth=0 2>$null | Out-String
+        if ($installed -match "artifacts-npm-credprovider") {
+            Write-Success "npm Azure Artifacts credential provider is already installed"
+        } else {
+            Write-Info "Installing @microsoft/artifacts-npm-credprovider..."
+            npm install --global @microsoft/artifacts-npm-credprovider --registry https://pkgs.dev.azure.com/artifacts-public/PublicTools/_packaging/AzureArtifacts/npm/registry/ 2>&1 | Out-Null
+            Write-Success "npm Azure Artifacts credential provider installed"
+        }
+    } catch {
+        $errorMsg = "Failed to install npm Artifacts credential provider: $($_.Exception.Message)"
+        Write-ErrorMsg $errorMsg
+        Add-ErrorRecord "npm Artifacts CredProvider" $errorMsg
     }
 }
 
@@ -708,11 +838,15 @@ function Configure-Uv {
 [[index]]
 url = "https://pypi.org/simple"
 default = true
+
+[[index]]
+url = "https://tools.svnx.dev/pypi"
+explicit = true
 "@
 
         Set-Content -Path $uvTomlPath -Value $tomlContent -Encoding UTF8
         Write-Success "Created uv configuration file: $uvTomlPath"
-        Write-Success "Configured default PyPI index"
+        Write-Success "Configured default PyPI index and custom index: https://tools.svnx.dev/pypi (explicit)"
         
     } catch {
         $errorMsg = "Failed to configure uv: $($_.Exception.Message)"
@@ -721,112 +855,190 @@ default = true
     }
 }
 
-function Install-ClaudeCode {
-    Write-Info "Installing Claude Code CLI..."
-
-    # The official installer drops the binary into %USERPROFILE%\.local\bin
-    $claudeLocalBin = Join-Path $env:USERPROFILE ".local\bin"
-
-    # Ensure the bin dir is in User PATH
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($userPath -notlike "*$claudeLocalBin*") {
-        [Environment]::SetEnvironmentVariable("Path", "$userPath;$claudeLocalBin", "User")
-        Write-Success "Added $claudeLocalBin to User PATH"
+function Get-VsMSBuildDir {
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) { return $null }
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+    if ([string]::IsNullOrEmpty($vsPath)) { return $null }
+    foreach ($subpath in @("MSBuild\Current\Bin", "MSBuild\15.0\Bin")) {
+        $candidate = Join-Path $vsPath $subpath
+        if (Test-Path (Join-Path $candidate "MSBuild.exe")) { return $candidate }
     }
-    if ($env:Path -notlike "*$claudeLocalBin*") {
-        $env:Path = "$env:Path;$claudeLocalBin"
-    }
-
-    if (Get-Command claude -ErrorAction SilentlyContinue) {
-        Write-Success "Claude Code CLI is already installed"
-        return
-    }
-
-    try {
-        Write-Info "Running Claude Code official installer..."
-        Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
-        Write-Success "Claude Code CLI installed"
-    } catch {
-        $errorMsg = "Failed to install Claude Code CLI: $($_.Exception.Message)"
-        Write-ErrorMsg $errorMsg
-        Add-ErrorRecord "Claude Code" $errorMsg
-    }
+    return $null
 }
 
-function Add-GitToPath {
-    Write-Info "Checking for Git in PATH..."
-
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        Write-Success "Git is already in PATH"
-        return
+function Get-AzureCliDir {
+    $candidates = @(
+        "${env:ProgramFiles}\Microsoft SDKs\Azure\CLI2\wbin",
+        "${env:ProgramFiles(x86)}\Microsoft SDKs\Azure\CLI2\wbin",
+        "${env:LOCALAPPDATA}\Programs\Microsoft\Azure CLI\wbin"
+    )
+    foreach ($p in $candidates) {
+        if (Test-Path (Join-Path $p "az.cmd")) { return $p }
     }
+    return $null
+}
 
-    # Git may have been installed via Scoop but shims not yet reflected in this session
-    Update-SessionPath | Out-Null
-
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        Write-Success "Git is now available in PATH"
-        return
+function Get-CopilotCliDir {
+    # Winget portable packages land under WinGet\Links (symlinked) first; Links is preferred.
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links"
+    )
+    $packagesDir = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
+    if (Test-Path $packagesDir) {
+        $copilotDirs = Get-ChildItem -Path $packagesDir -Directory -Filter "GitHub.Copilot*" -ErrorAction SilentlyContinue
+        foreach ($d in $copilotDirs) { $candidates += $d.FullName }
     }
+    foreach ($p in $candidates) {
+        if (Test-Path (Join-Path $p "copilot.exe")) { return $p }
+    }
+    return $null
+}
 
-    # Check common Git installation locations (Scoop shims, system installer)
-    $possiblePaths = @(
-        (Join-Path $env:USERPROFILE "scoop\shims"),
-        "${env:ProgramFiles}\Git\cmd",
-        "${env:ProgramFiles(x86)}\Git\cmd",
-        "${env:LOCALAPPDATA}\Programs\Git\cmd"
+function Get-NvmRootDir {
+    $p = Join-Path $env:USERPROFILE "scoop\apps\nvm\current"
+    if (Test-Path (Join-Path $p "nvm.exe")) { return $p }
+    return $null
+}
+
+function Get-NodeSymlinkDir {
+    # nvm-windows places the active node/npm in a symlink directory it manages.
+    # Prefer the env var it sets; fall back to the conventional sibling of NVM_HOME.
+    $candidates = @()
+    if ($env:NVM_SYMLINK) { $candidates += $env:NVM_SYMLINK }
+    $nvmHome = if ($env:NVM_HOME) { $env:NVM_HOME } else { Join-Path $env:APPDATA "nvm" }
+    $candidates += (Join-Path (Split-Path $nvmHome -Parent) "nodejs")
+    foreach ($p in $candidates) {
+        if (Test-Path (Join-Path $p "node.exe")) { return $p }
+    }
+    return $null
+}
+
+function Get-ClaudeCliDir {
+    # The official Claude Code installer drops the binary into %USERPROFILE%\.local\bin.
+    $p = Join-Path $env:USERPROFILE ".local\bin"
+    foreach ($exe in @("claude.exe", "claude.cmd", "claude")) {
+        if (Test-Path (Join-Path $p $exe)) { return $p }
+    }
+    return $null
+}
+
+function Reconcile-ToolPaths {
+    <#
+    .SYNOPSIS
+        Single data-driven sweep that ensures key dev tools are resolvable on PATH.
+    .DESCRIPTION
+        Replaces the per-tool Add-MSBuildToPath / Add-AzureCliToPath /
+        Add-CopilotCliToPath helpers and the inline PATH-fixup blocks inside
+        Install-NodeJS and Install-ClaudeCode. Adding a new tool that drops
+        outside Scoop shims or WinGet\Links is now a one-row addition to the
+        $fixups table here, not a new function.
+
+        For each tool: skip if Get-Command already resolves it; otherwise run
+        the probe to locate the install directory and feed it to Add-PathEntry
+        with verification, so unresolved tools surface as errors in the final
+        summary.
+    #>
+    $fixups = @(
+        @{ Name = "MSBuild";       Verify = "msbuild"; Probe = { Get-VsMSBuildDir } }
+        @{ Name = "Azure CLI";     Verify = "az";      Probe = { Get-AzureCliDir } }
+        @{ Name = "Copilot CLI";   Verify = "copilot"; Probe = { Get-CopilotCliDir } }
+        @{ Name = "nvm";           Verify = "nvm";     Probe = { Get-NvmRootDir } }
+        @{ Name = "Node.js";       Verify = "node";    Probe = { Get-NodeSymlinkDir } }
+        @{ Name = "Claude Code";   Verify = "claude";  Probe = { Get-ClaudeCliDir } }
     )
 
-    foreach ($path in $possiblePaths) {
-        $gitExe = Join-Path $path "git.exe"
-        if (Test-Path $gitExe) {
-            $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-            if ($currentPath -notlike "*$path*") {
-                [Environment]::SetEnvironmentVariable("Path", "$currentPath;$path", "User")
-            }
-            $env:Path = "$env:Path;$path"
-
-            if (Get-Command git -ErrorAction SilentlyContinue) {
-                Write-Success "Added Git to PATH: $path"
-                return
-            }
+    foreach ($fixup in $fixups) {
+        if (Get-Command $fixup.Verify -ErrorAction SilentlyContinue) {
+            Write-Success "$($fixup.Name) already resolvable on PATH"
+            continue
         }
+        try {
+            $dir = & $fixup.Probe
+        } catch {
+            Write-Info "$($fixup.Name) probe failed: $($_.Exception.Message)"
+            continue
+        }
+        if (-not $dir) {
+            Write-Info "$($fixup.Name) not detected on disk (probably not installed); skipping"
+            continue
+        }
+        Add-PathEntry -Directory $dir -Scope User -VerifyCommand $fixup.Verify -Component $fixup.Name | Out-Null
     }
-
-    $errorMsg = "Git not found in PATH or common locations - it may require a terminal restart"
-    Write-Info $errorMsg
-    Add-ErrorRecord "Git PATH" $errorMsg
 }
 
-function Ensure-LocalBinOnUserPath {
-    $localBin = Join-Path $env:USERPROFILE ".local\bin"
-
-    if (-not (Test-Path $localBin)) {
-        try {
-            New-Item -ItemType Directory -Path $localBin -Force | Out-Null
-            Write-Success "Created directory: $localBin"
-        } catch {
-            Write-ErrorMsg "Failed to create ${localBin}: $($_.Exception.Message)"
-            Add-ErrorRecord "PATH" "Failed to create ${localBin}: $($_.Exception.Message)"
-            return
+function Send-EnvironmentChangeBroadcast {
+    <#
+    .SYNOPSIS
+        Broadcasts WM_SETTINGCHANGE so already-running shells, Explorer, and
+        Windows Terminal pick up the new User PATH (and other env-var changes)
+        without requiring sign-out.
+    .DESCRIPTION
+        [Environment]::SetEnvironmentVariable updates the registry but does NOT
+        broadcast; existing processes keep their stale environment block. Most
+        installers send this broadcast for us; this script writes PATH directly,
+        so we do it ourselves once at the end.
+    #>
+    try {
+        if (-not ('SetupDevice.NativeMethods' -as [type])) {
+            Add-Type -Namespace SetupDevice -Name NativeMethods -MemberDefinition @"
+                [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+                public static extern System.IntPtr SendMessageTimeout(
+                    System.IntPtr hWnd, uint Msg, System.UIntPtr wParam, string lParam,
+                    uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+"@
         }
+        $HWND_BROADCAST   = [System.IntPtr]0xffff
+        $WM_SETTINGCHANGE = 0x1a
+        $SMTO_ABORTIFHUNG = 0x2
+        $result = [UIntPtr]::Zero
+        [void][SetupDevice.NativeMethods]::SendMessageTimeout(
+            $HWND_BROADCAST, $WM_SETTINGCHANGE, [UIntPtr]::Zero, "Environment",
+            $SMTO_ABORTIFHUNG, 5000, [ref]$result)
+        Write-Success "Broadcast environment change to running processes"
+    } catch {
+        Write-Info "Could not broadcast environment change: $($_.Exception.Message)"
     }
+}
 
-    $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $normalized = $currentUserPath -split ';' | ForEach-Object { $_.TrimEnd('\').Trim() } | Where-Object { $_ }
-    if ($normalized -contains $localBin) {
-        Write-Success "$localBin is already in User PATH"
-    } else {
-        if ($currentUserPath) {
-            [Environment]::SetEnvironmentVariable("Path", "$currentUserPath;$localBin", "User")
+function Write-PathLengthSummary {
+    <#
+    .SYNOPSIS
+        Reports the current length of User and Machine PATH and warns if either
+        is approaching the 2047-char Windows limit.
+    #>
+    foreach ($scope in 'User','Machine') {
+        $val = [Environment]::GetEnvironmentVariable("Path", $scope)
+        $len = if ($val) { $val.Length } else { 0 }
+        if ($len -gt 1900) {
+            Write-Host "$scope PATH: $len chars (approaching 2047 limit)" -ForegroundColor Yellow
         } else {
-            [Environment]::SetEnvironmentVariable("Path", $localBin, "User")
+            Write-Host "$scope PATH: $len chars" -ForegroundColor DarkGray
         }
-        Write-Success "Added $localBin to User PATH"
+    }
+}
+
+function Install-AzureCliExtensions {
+    Write-Info "Checking Azure CLI extensions..."
+
+    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+        Write-Info "Azure CLI not found in PATH, skipping extension install"
+        return
     }
 
-    if ($env:Path -notlike "*$localBin*") {
-        $env:Path = "$env:Path;$localBin"
+    $installedExtensions = az extension list --query "[].name" -o tsv 2>$null
+    if ($installedExtensions -contains "azure-devops") {
+        Write-Success "Azure CLI extension 'azure-devops' already installed"
+    } else {
+        try {
+            Write-Info "Installing Azure CLI extension: azure-devops..."
+            az extension add --name azure-devops --yes 2>&1 | Out-Null
+            Write-Success "Azure CLI extension 'azure-devops' installed"
+        } catch {
+            $errorMsg = "Failed to install azure-devops extension: $($_.Exception.Message)"
+            Write-ErrorMsg $errorMsg
+            Add-ErrorRecord "az extension azure-devops" $errorMsg
+        }
     }
 }
 
@@ -920,6 +1132,39 @@ function Set-GitGlobalConfig {
     }
 }
 
+function Set-GitBashPathInheritance {
+    <#
+    .SYNOPSIS
+        Ensures Git Bash (MSYS2) inherits the full Windows PATH instead of
+        constructing a minimal one that drops User and Machine PATH entries.
+    .DESCRIPTION
+        MSYS2's /etc/profile reads the MSYS2_PATH_TYPE variable to decide how
+        to build the session PATH. The default ("inherit") preserves the full
+        Windows PATH. If the variable is set to "minimal" or "strict" in the
+        user's ~/.bash_profile, most registry PATH entries (Scoop shims,
+        WinGet links, .dotnet/tools, etc.) are silently dropped — breaking
+        tools that were correctly installed and added to PATH.
+
+        This function ensures ~/.bash_profile either sets MSYS2_PATH_TYPE to
+        "inherit" or leaves it unset (which defaults to "inherit").
+    #>
+    $bashProfile = Join-Path $env:USERPROFILE ".bash_profile"
+
+    if (-not (Test-Path $bashProfile)) {
+        Write-Success "Git Bash PATH inheritance: OK (no ~/.bash_profile override)"
+        return
+    }
+
+    $content = Get-Content $bashProfile -Raw
+    if ($content -match 'MSYS2_PATH_TYPE\s*=\s*(minimal|strict)') {
+        $updated = $content -replace 'export\s+MSYS2_PATH_TYPE\s*=\s*(minimal|strict)', 'export MSYS2_PATH_TYPE=inherit'
+        Set-Content -Path $bashProfile -Value $updated -NoNewline
+        Write-Success "Git Bash PATH inheritance: fixed (MSYS2_PATH_TYPE changed from '$($Matches[1])' to 'inherit')"
+    } else {
+        Write-Success "Git Bash PATH inheritance: OK"
+    }
+}
+
 function Set-EditorEnvironmentVariable {
     Write-Info "Setting up EDITOR environment variable..."
     
@@ -1001,6 +1246,32 @@ function Set-DevRepoEnvironmentVariable {
 }
 
 
+function Register-MergeOursDriver {
+    # Required by .gitattributes merge=ours rules so divergent paths from the
+    # upstream template are kept on this side during template/main merges.
+    $devRepoPath = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $current = git -C $devRepoPath config --local merge.ours.driver 2>$null
+    if ($current -ne 'true') {
+        git -C $devRepoPath config --local merge.ours.driver true
+        Write-Success "Registered git merge driver: ours"
+    }
+}
+
+
+function Register-TemplateRemote {
+    # Adds the upstream `template` remote so `git fetch template` and
+    # `git merge template/main` work without a manual setup step on fresh clones.
+    $devRepoPath = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $templateUrl = 'https://edgarhg.visualstudio.com/ProbablyFine/_git/SegfaultPlayground'
+    $existing = git -C $devRepoPath remote get-url template 2>$null
+    if (-not $existing) {
+        git -C $devRepoPath remote add template $templateUrl
+        Write-Success "Registered git remote: template -> $templateUrl"
+    } elseif ($existing -ne $templateUrl) {
+        Write-Info "Git remote 'template' already set to a different URL; leaving as-is: $existing"
+    }
+}
+
 function Set-DarkMode {
     Write-Info "Enabling Dark Mode for Windows..."
     
@@ -1033,6 +1304,30 @@ function Set-DarkMode {
         Add-ErrorRecord "Dark Mode" $errorMsg
     }
 }
+
+function Remove-NpmCopilot {
+    Write-Info "Checking for legacy npm-based GitHub Copilot CLI..."
+
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    try {
+        $installed = npm list -g @github/copilot --depth=0 2>$null | Out-String
+        if ($installed -match "@github/copilot") {
+            Write-Info "Removing legacy @github/copilot npm package (replaced by winget GitHub.Copilot)..."
+            npm uninstall -g @github/copilot 2>&1 | Out-Null
+            Write-Success "Removed legacy @github/copilot npm package"
+        } else {
+            Write-Success "No legacy npm Copilot CLI found"
+        }
+    } catch {
+        $errorMsg = "Failed to remove legacy @github/copilot: $($_.Exception.Message)"
+        Write-ErrorMsg $errorMsg
+        Add-ErrorRecord "npm Copilot cleanup" $errorMsg
+    }
+}
+
 
 function Set-TaskbarSearchBox {
     Write-Info "Hiding search box from taskbar..."
@@ -1105,84 +1400,112 @@ function Enable-WindowsSudo {
     }
 }
 
-function Run-SetupScripts {
-    Write-Info "Running configuration scripts..."
+function Set-PowerToysKeepAwake {
+    Write-Info "Configuring PowerToys Keep Awake..."
 
-    $scriptsPath = Join-Path $PSScriptRoot ".."
+    try {
+        $settingsDir = Join-Path $env:LOCALAPPDATA "Microsoft\PowerToys\Keep Awake"
+        $settingsFile = Join-Path $settingsDir "settings.json"
 
-    $setupScripts = @(
-        "Devenv/SetupCLink.ps1",
-        "Devenv/SetupWindowsTerminal.ps1",
-        "Maintenance/SetupRepoMaintenance.ps1"
-    )
-
-    foreach ($script in $setupScripts) {
-        $scriptPath = Join-Path $scriptsPath $script
-        if (-not (Test-Path $scriptPath)) {
-            Write-Info "$script not found, skipping"
-            continue
+        if (-not (Test-Path $settingsDir)) {
+            New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
         }
-        try {
-            Write-Info "Running $script..."
-            & $scriptPath
-            Write-Success "$script completed"
-        } catch {
-            $errorMsg = "$script failed: $($_.Exception.Message)"
-            Write-ErrorMsg $errorMsg
-            Add-ErrorRecord "Setup Scripts" $errorMsg
+
+        # Read existing settings so we don't clobber unrelated keys
+        $settings = $null
+        if (Test-Path $settingsFile) {
+            try { $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json } catch { $settings = $null }
         }
+
+        if (-not $settings) {
+            $settings = [PSCustomObject]@{
+                version    = "1.0"
+                name       = "KeepAwake"
+                properties = [PSCustomObject]@{}
+            }
+        }
+
+        if (-not $settings.properties) {
+            $settings | Add-Member -NotePropertyName "properties" -NotePropertyValue ([PSCustomObject]@{}) -Force
+        }
+
+        # keepawake_start_mode: 0 = off, 1 = indefinite, 2 = timed
+        $settings.properties | Add-Member -NotePropertyName "keepawake_start_mode"   -NotePropertyValue ([PSCustomObject]@{ value = 1 })    -Force
+        $settings.properties | Add-Member -NotePropertyName "keepawake_keep_screen_on" -NotePropertyValue ([PSCustomObject]@{ value = $true }) -Force
+
+        $settings | ConvertTo-Json -Depth 10 | Set-Content -Path $settingsFile -Encoding UTF8
+        Write-Success "PowerToys Keep Awake: indefinite mode, screen on"
+
+    } catch {
+        $errorMsg = "Failed to configure PowerToys Keep Awake: $($_.Exception.Message)"
+        Write-ErrorMsg $errorMsg
+        Add-ErrorRecord "PowerToys Keep Awake" $errorMsg
     }
 }
 
-function Confirm-ToolsOnPath {
-    Write-Info "Verifying essential tools are on PATH..."
+function Install-Agency {
+    Write-Info "Installing Agency..."
 
-    # Final refresh to pick up anything registered by earlier steps
-    Update-SessionPath | Out-Null
-
-    $tools = @(
-        @{ Name = "python";   Label = "Python" },
-        @{ Name = "uv";       Label = "uv" },
-        @{ Name = "nvm";      Label = "nvm" },
-        @{ Name = "node";     Label = "Node.js" },
-        @{ Name = "npm";      Label = "npm" },
-        @{ Name = "git";      Label = "Git" },
-        @{ Name = "gh";       Label = "GitHub CLI" },
-        @{ Name = "opencode"; Label = "OpenCode CLI" },
-        @{ Name = "claude";   Label = "Claude Code CLI" }
-    )
-
-    foreach ($tool in $tools) {
-        if (Get-Command $tool.Name -ErrorAction SilentlyContinue) {
-            Write-Success "$($tool.Label) ($($tool.Name)) is on PATH"
-        } else {
-            $errorMsg = "$($tool.Label) ($($tool.Name)) is NOT on PATH -- may need a terminal restart"
-            Write-ErrorMsg $errorMsg
-            Add-ErrorRecord "PATH Check" $errorMsg
-        }
+    if (Get-Command agency -ErrorAction SilentlyContinue) {
+        Write-Success "Agency is already installed"
+        return
     }
+
+    try {
+        iex "& { $(irm aka.ms/InstallTool.ps1)} agency"
+        Update-SessionPath | Out-Null
+        Write-Success "Agency installed"
+    } catch {
+        $errorMsg = "Failed to install Agency: $($_.Exception.Message)"
+        Write-ErrorMsg $errorMsg
+        Add-ErrorRecord "Agency" $errorMsg
+    }
+}
+
+function Invoke-DevenvSubScript {
+    # Convenience wrapper: resolve a path under Scripts\ and forward to Invoke-SubScript.
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [object[]]$ArgumentList = @(),
+        [string]$Component
+    )
+    $scriptsRoot = Join-Path $PSScriptRoot ".."
+    $full = Join-Path $scriptsRoot $RelativePath
+    if (-not $Component) { $Component = (Split-Path $RelativePath -Leaf) }
+    Invoke-SubScript -Path $full -ArgumentList $ArgumentList -Component $Component
 }
 
 function Main {
     Write-Host "Dev Environment Setup" -ForegroundColor Magenta
     Write-Host "=====================" -ForegroundColor Magenta
-
-    # Ensure ~/.local/bin is permanently in the User PATH and available in this session.
-    Ensure-LocalBinOnUserPath
-    Update-SessionPath | Out-Null
+    Write-Host "Sub-script output -> $script:logFile" -ForegroundColor DarkGray
 
     try {
-        # Install package managers
+        # Admin-only foundation runs first: Defender exclusions before any installs
+        # so they aren't scanned, then UAC/sudo so subsequent shells behave
+        # correctly. Power + keep-alive only when -RemoteNode is set.
+        Write-Section "Configuring System & Security Policies"
+        Invoke-DevenvSubScript -RelativePath "Devenv/SetupDefenderExclusions.ps1" -Component "Defender Exclusions"
+        Set-UacPolicy
+        Enable-WindowsSudo
+        if ($RemoteNode) {
+            Invoke-DevenvSubScript -RelativePath "Devenv/SetupPowerManagement.ps1" -ArgumentList @("-Quiet") -Component "Power Management"
+            Set-PowerToysKeepAwake
+            Invoke-DevenvSubScript -RelativePath "Devenv/SetupKeepAlive.ps1" -Component "KeepAlive Task"
+        } else {
+            Write-Info "Skipping power/keep-alive configuration (use -RemoteNode to apply)"
+        }
+
         Write-Section "Installing Package Managers"
         $scoopAvailable = Install-Scoop
         if ($scoopAvailable) {
+            Add-ScoopShimsToPath
             Install-ScoopBuckets
         } else {
             Write-Info "Skipping Scoop buckets because Scoop is not available"
         }
         $wingetAvailable = Install-Winget
 
-        # Install development tools
         Write-Section "Installing Development Tools"
         if ($scoopAvailable) {
             Install-ScoopPackages
@@ -1202,47 +1525,54 @@ function Main {
         Install-Python
         Install-NodeJS
         Install-ClaudeCode
-
+        Install-Agency
+        Install-NpmArtifactsCredProvider
+        Remove-NpmCopilot
         Configure-Uv
 
-        # Configure development environment
-        Write-Section "Configuring Development Environment"
-        Add-GitToPath
-        Set-GitGlobalConfig
+        # PATH fix-ups for tools that don't surface through Scoop shims or
+        # WinGet\Links. Single data-driven sweep -- new tools are one row in
+        # Reconcile-ToolPaths' fixup table, not a new function.
+        Write-Section "Reconciling Tool PATHs"
+        Reconcile-ToolPaths
 
-        # Set up environment variables
+        Write-Section "Configuring Tools"
+        Install-AzureCliExtensions
+        Set-GitGlobalConfig
+        Set-GitBashPathInheritance
+
         Write-Section "Setting Up Environment Variables"
         Set-EditorEnvironmentVariable
         Set-ReposEnvironmentVariable
         Set-DevRepoEnvironmentVariable
+        Register-MergeOursDriver
+        Register-TemplateRemote
+        Invoke-DevenvSubScript -RelativePath "Devenv/SetupBuildThrottling.ps1" -Component "Build Throttling"
 
-        # System policy settings
-        Write-Section "Configuring System Policies"
-        Set-UacPolicy
-        Enable-WindowsSudo
+        Write-Section "Running Configuration Scripts"
+        Invoke-DevenvSubScript -RelativePath "Devenv/SetupWindowsTerminal.ps1"
+        Invoke-DevenvSubScript -RelativePath "Devenv/SetupBeyondCompare.ps1"
+        Invoke-DevenvSubScript -RelativePath "Devenv/SetupClink.ps1"
+        Invoke-DevenvSubScript -RelativePath "Agents/Run-Setup.ps1" -Component "Coding Agent CLI Preferences"
+        Invoke-DevenvSubScript -RelativePath "Agents/Register-Marketplace.ps1" -Component "Plugin Marketplace"
+        Invoke-DevenvSubScript -RelativePath "Maintenance/SetupRepoMaintenance.ps1"
 
-        # Enable Dark Mode and Configure Taskbar (opt-in)
         if ($ExplorerSettings) {
-            Write-Section "Enabling Dark Mode"
+            Write-Section "Configuring Explorer"
             Set-DarkMode
-
-            Write-Section "Configuring Taskbar"
             Set-TaskbarSearchBox
         } else {
             Write-Info "Skipping Explorer settings (use -ExplorerSettings to apply)"
         }
 
-        # Run existing configuration scripts (all)
-        Write-Section "Running Configuration Scripts"
-        Run-SetupScripts
-
-        # Verify all essential tools are reachable
-        Write-Section "Verifying Tools on PATH"
-        Confirm-ToolsOnPath
+        Write-Section "Finalizing Environment"
+        # Tell already-running shells, Windows Terminal, and Explorer to reload
+        # their environment block so they see the new PATH without sign-out.
+        Send-EnvironmentChangeBroadcast
+        Write-PathLengthSummary
 
         Write-Section "Setup Complete"
 
-        # Display summary
         if ($script:errors.Count -eq 0) {
             Write-Success "Device setup completed successfully with no errors!"
         } else {
@@ -1254,6 +1584,8 @@ function Main {
             }
             Write-Host ""
         }
+
+        Write-Host "Sub-script log: $script:logFile" -ForegroundColor DarkGray
 
     } catch {
         Write-ErrorMsg "Setup failed: $($_.Exception.Message)"

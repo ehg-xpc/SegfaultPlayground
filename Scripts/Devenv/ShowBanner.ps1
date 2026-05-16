@@ -20,13 +20,15 @@ if ($animate) {
     # Update the timestamp
     [IO.File]::WriteAllText($stampFile, "")
 
-    $ESC = [char]27
-    $up3 = "$ESC[3A"
     $len = $line1.Length
     $step = 4
 
+    function Move-Up3 {
+        [Console]::SetCursorPosition(0, [Console]::CursorTop - 3)
+    }
+
     function Write-Banner($c1, $c2, $c3) {
-        Write-Host $up3 -NoNewline
+        Move-Up3
         Write-Host $line1 -ForegroundColor $c1
         Write-Host $line2 -ForegroundColor $c2
         Write-Host $line3 -ForegroundColor $c3
@@ -35,7 +37,7 @@ if ($animate) {
     # Phase 1: left-to-right reveal across all 3 lines simultaneously
     Write-Host ""
     for ($i = $step; $i -le ($len + $step - 1); $i += $step) {
-        if ($i -gt $step) { Write-Host $up3 -NoNewline }
+        if ($i -gt $step) { Move-Up3 }
         $end = [Math]::Min($i, $len)
         $pad = ' ' * ($len - $end)
         Write-Host ($line1.Substring(0, $end) + $pad) -ForegroundColor DarkGray

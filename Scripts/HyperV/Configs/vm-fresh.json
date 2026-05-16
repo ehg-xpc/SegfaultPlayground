@@ -1,0 +1,21 @@
+{
+  "_comment": "VM created from scratch with an ISO. Requires manual or unattended Windows setup before use.",
+  "name": "FreshInstallVM",
+  "type": "freshISO",
+  "generation": 2,
+  "memorySizeMB": 8192,
+  "processorCount": 4,
+  "vhdSizeGB": 80,
+  "switchName": "Default Switch",
+  "isoPath": "C:\\ISOs\\Windows11_23H2_x64.iso",
+  "secureBoot": true,
+  "secureBootTemplate": "MicrosoftWindows",
+  "checkpointType": "Production",
+  "dynamicMemory": {
+    "enabled": false
+  },
+  "guestCredential": {
+    "username": "FreshInstallVM\\Administrator",
+    "passwordSecretEnvVar": "TESTVM_PASSWORD"
+  }
+}

@@ -7,12 +7,16 @@
     For each cloned repo in RepositoryConfig.json:
       1. Run Invoke-RepoSync.ps1 to stash, switch to the default branch, and
          pull --ff-only (skipped if the repo sets "skipCommonSync": true).
-      2. If a per-repo Invoke-Maintenance.ps1 exists under Scripts/Repos/<RepoName>/,
-         invoke it with -RepoPath <absolute repo root>.
+      2. If a per-repo Invoke-Maintenance.cmd or Invoke-Maintenance.ps1 exists
+         under Scripts/Repos/<RepoName>/, invoke it with the repo path. The
+         .cmd variant is preferred when both are present; this lets repos whose
+         tooling expects a pure cmd environment (e.g. CoreXT) avoid pwsh
+         inheritance leaks. .cmd receives the repo path as %1; .ps1 receives
+         it as -RepoPath.
 
-    Per-repo Invoke-Maintenance.ps1 scripts may assume the common sync has run
-    successfully when they start. If common sync fails for a repo, the per-repo
-    script is skipped and the orchestrator moves on to the next repo.
+    Per-repo maintenance scripts may assume the common sync has run successfully
+    when they start. If common sync fails for a repo, the per-repo script is
+    skipped and the orchestrator moves on to the next repo.
 
     Logs to: $env:LOCALAPPDATA\RepoMaintenance\RepoMaintenance.log
 
@@ -91,14 +95,21 @@ foreach ($repoName in $config.repositories.PSObject.Properties.Name) {
         continue
     }
 
-    # Per-repo maintenance script (optional)
-    $maintenanceScript = Join-Path $scriptsRoot "Repos" $repoName "Invoke-Maintenance.ps1"
-    if (-not (Test-Path $maintenanceScript)) {
+    # Per-repo maintenance script (optional). Prefer .cmd over .ps1 so repos
+    # whose tooling expects a pure cmd environment can opt out of pwsh.
+    $maintenanceCmd = Join-Path $scriptsRoot "Repos" $repoName "Invoke-Maintenance.cmd"
+    $maintenancePs1 = Join-Path $scriptsRoot "Repos" $repoName "Invoke-Maintenance.ps1"
+
+    if (Test-Path $maintenanceCmd) {
+        Write-Log "[$repoName] Running maintenance script..."
+        $output = & cmd.exe /c "`"$maintenanceCmd`"" "$repoPath" 2>&1 | Out-String
+    } elseif (Test-Path $maintenancePs1) {
+        Write-Log "[$repoName] Running maintenance script..."
+        $output = & $maintenancePs1 -RepoPath $repoPath 2>&1 | Out-String
+    } else {
         continue
     }
 
-    Write-Log "[$repoName] Running maintenance script..."
-    $output = & $maintenanceScript -RepoPath $repoPath 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) {
         Write-Log "[$repoName] Maintenance OK: $($output.Trim())" "OK"
     } else {

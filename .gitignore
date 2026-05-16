@@ -3,6 +3,7 @@
 
 # Agent context (auto-generated on terminal init)
 CLAUDE.local.md
+/AGENTS.md
 .stanley-project
 .context
 AgentContext/
