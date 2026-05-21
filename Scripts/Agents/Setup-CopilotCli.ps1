@@ -13,6 +13,11 @@
     <linkPath>.backup.<timestamp> first (skipped under -Force). Re-launches
     elevated if the OS rejects the symlink for lack of privilege.
 
+    Note: A "symlink" (symbolic link) is a filesystem shortcut that points
+    to another file or directory. Accessing the symlink acts like accessing
+    the target; if the target is removed or moved the symlink becomes
+    dangling (it points to a non-existent target).
+
 .PARAMETER PreferencesFile
     Path to the preferences file the symlinks should point at.
 

@@ -5,6 +5,14 @@
     coding CLIs from %dev_repo%\Config\<cli>\preferences.md.
     CLIs whose preferences.md file does not exist are silently skipped.
 
+    It does this by creating symlinks on the files each CLI expect, and point them
+    to a single preference file. 
+
+    Note: A "symlink" (symbolic link) is a filesystem shortcut that points
+    to another file or directory. Accessing the symlink acts like accessing
+    the target; if the target is removed or moved the symlink becomes
+    dangling (it points to a non-existent target).
+
 .PARAMETER Cli
     Which CLI's preferences to wire up: claude, copilot, or opencode.
     Optional -- when omitted, all three are wired up in sequence.
